@@ -12,7 +12,7 @@ readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
 exec 1> >(tee -a "$LOG_FILE")
 exec 2> >(tee -a "$LOG_FILE" >&2)
 
-debug() { echo "[DEBUG] $*" >&2; }
+debug() { [[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] $*" >&2; }
 
 msg() { echo -e "${!1}[${1}]${NC} ${*:2}"; }
 err() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
@@ -100,21 +100,21 @@ run_pkg() {
         update_brew) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
         install_brew) su - "$SUDO_USER" -c "brew install --quiet $*" ;;
         cleanup_brew) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
-        update_apt) apt-get update -qq && apt-get upgrade -y -qq ;;
-        install_apt) apt-get install -y -qq "$@" ;;
-        cleanup_apt) apt-get autoremove -y -qq && apt-get autoclean ;;
-        update_dnf) dnf update -y -q ;;
-        install_dnf) dnf install -y -q "$@" ;;
-        cleanup_dnf) dnf autoremove -y -q ;;
-        update_yum) yum update -y -q ;;
-        install_yum) yum install -y -q "$@" ;;
-        cleanup_yum) yum autoremove -y -q ;;
-        update_pacman) pacman -Syu --noconfirm --quiet ;;
-        install_pacman) pacman -S --noconfirm --quiet "$@" ;;
-        cleanup_pacman) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null || true; pacman -Sc --noconfirm --quiet ;;
-        update_zypper) zypper update -y -q ;;
-        install_zypper) zypper install -y -q "$@" ;;
-        cleanup_zypper) zypper packages --unneeded | grep "|" | grep -v "Name" | awk -F'|' '{print $3}' | xargs -r zypper remove -y -q 2>/dev/null || true; zypper clean ;;
+update_apt) apt-get update && apt-get upgrade -y ;;
+install_apt) apt-get install -y "$@" ;;
+cleanup_apt) apt-get autoremove -y && apt-get autoclean ;;
+update_dnf) dnf update -y ;;
+install_dnf) dnf install -y "$@" ;;
+cleanup_dnf) dnf autoremove -y ;;
+update_yum) yum update -y ;;
+install_yum) yum install -y "$@" ;;
+cleanup_yum) yum autoremove -y ;;
+update_pacman) pacman -Syu --noconfirm ;;
+install_pacman) pacman -S --noconfirm "$@" ;;
+cleanup_pacman) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null || true; pacman -Sc --noconfirm ;;
+update_zypper) zypper update -y ;;
+install_zypper) zypper install -y "$@" ;;
+cleanup_zypper) zypper packages --unneeded | grep "|" | grep -v "Name" | awk -F'|' '{print $3}' | xargs -r zypper remove -y 2>/dev/null || true; zypper clean ;;
     esac
 }
 
