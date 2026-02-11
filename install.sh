@@ -4,7 +4,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="${BASH_SOURCE[0]:+$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [[ -n "${BASH_SOURCE[0]:-}" ]] && readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")" || readonly SCRIPT_NAME="install.sh"
-readonly VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.0.0"
 readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
@@ -48,7 +48,7 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help) show_help; exit 0 ;;
-            -v|--version) echo "$SCRIPT_NAME version $VERSION"; exit 0 ;;
+            -v|--version) echo "$SCRIPT_NAME version $SCRIPT_VERSION"; exit 0 ;;
             -d|--dry-run) DRY_RUN=1; shift ;;
             --no-backup) NO_BACKUP=1; shift ;;
             --no-shell) NO_SHELL=1; shift ;;
