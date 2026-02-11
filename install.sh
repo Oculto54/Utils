@@ -74,6 +74,7 @@ parse_args() {
 }
 
 check_sudo() {
+echo "[DEBUG] check_sudo: EUID=$EUID, SUDO_USER=${SUDO_USER:-<unset>}" >&2
 if [[ $EUID -ne 0 ]]; then
 err "This script must be run with sudo or as root (EUID=$EUID)"
 exit 1
@@ -82,6 +83,7 @@ if [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null; then
 err "Invalid SUDO_USER: ${SUDO_USER}"
 exit 1
 fi
+echo "[DEBUG] check_sudo: passed" >&2
 }
 
 detect_os() {
