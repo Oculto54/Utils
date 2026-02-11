@@ -253,7 +253,11 @@ msg GREEN "Installation complete!"
 msg GREEN "=========================================="
 msg GREEN "Log saved to: $LOG_FILE"
 msg GREEN "Next steps: 1. Log out and back in 2. Run 'zsh'"
-[[ "${NO_BACKUP:-0}" != "1" ]] && ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1 | xargs -I {} msg GREEN "Backup: {}"
+if [[ "${NO_BACKUP:-0}" != "1" ]]; then
+local last_backup
+last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
+[[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
+fi
 debug "main: script completed"
 }
 
