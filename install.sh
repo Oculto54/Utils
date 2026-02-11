@@ -54,14 +54,14 @@ update_packages() {
 }
 
 install_packages() {
-    print_info "Installing git and zsh..."
+    print_info "Installing git, zsh, curl, and wget..."
     case "$PKG_MGR" in
-        brew) su - "$SUDO_USER" -c "brew install git zsh" ;;
-        apt) apt install -y git zsh ;;
-        dnf) dnf install -y git zsh ;;
-        yum) yum install -y git zsh ;;
-        pacman) pacman -S --noconfirm git zsh ;;
-        zypper) zypper install -y git zsh ;;
+        brew) su - "$SUDO_USER" -c "brew install git zsh curl wget" ;;
+        apt) apt install -y git zsh curl wget ;;
+        dnf) dnf install -y git zsh curl wget ;;
+        yum) yum install -y git zsh curl wget ;;
+        pacman) pacman -S --noconfirm git zsh curl wget ;;
+        zypper) zypper install -y git zsh curl wget ;;
     esac
 }
 
@@ -78,6 +78,52 @@ backup_dotfiles() {
     
     [ -n "${SUDO_USER:-}" ] && chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$BACKUP_DIR"
     print_info "Backed up to: $BACKUP_DIR"
+}
+
+download_zshrc() {
+    print_info "Downloading .zshrc configuration..."
+    REAL_USER="${SUDO_USER:-$(whoami)}"
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+    ZSHRC_URL="https://raw.githubusercontent.com/Oculto54/Utils/main/.zshrc"
+
+    if command -v curl &> /dev/null; then
+        curl -fsSL "$ZSHRC_URL" -o "$REAL_HOME/.zshrc"
+    elif command -v wget &> /dev/null; then
+        wget -q "$ZSHRC_URL" -O "$REAL_HOME/.zshrc"
+    else
+        print_error "Neither curl nor wget found. Cannot download .zshrc"
+        exit 1
+    fi
+
+    if [[ ! -f "$REAL_HOME/.zshrc" ]] || [[ ! -s "$REAL_HOME/.zshrc" ]] || ! grep -q "zsh" "$REAL_HOME/.zshrc"; then
+        print_error "Failed to download or verify .zshrc"
+        exit 1
+    fi
+
+    [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$REAL_HOME/.zshrc"
+    print_info "Successfully installed .zshrc"
+}
+
+create_root_symlinks() {
+    # Only create root symlinks on Linux (macOS doesn't use /root)
+    if [[ "$OS" == "linux" ]]; then
+        print_info "Creating symbolic links for root..."
+        REAL_USER="${SUDO_USER:-$(whoami)}"
+        REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+
+        # Create empty files if they don't exist (will be populated by .zshrc)
+        touch "$REAL_HOME/.p10k.zsh" 2>/dev/null || true
+        touch "$REAL_HOME/.nanorc" 2>/dev/null || true
+
+        # Create symbolic links for root
+        ln -sf "$REAL_HOME/.zshrc" /root/.zshrc
+        ln -sf "$REAL_HOME/.p10k.zsh" /root/.p10k.zsh
+        ln -sf "$REAL_HOME/.nanorc" /root/.nanorc
+
+        print_info "Root symbolic links created"
+    else
+        print_info "Skipping root symlinks (not applicable for $OS)"
+    fi
 }
 
 change_shell() {
@@ -105,9 +151,11 @@ main() {
     update_packages
     install_packages
     backup_dotfiles
+    download_zshrc
     change_shell
     verify_installation
-    
+    create_root_symlinks
+
     print_info "Installation complete! Log out and back in to use zsh."
 }
 
