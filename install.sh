@@ -2,161 +2,237 @@
 
 set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly VERSION="1.0.0"
+readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
 
-print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+[[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
+
+exec 1> >(tee -a "$LOG_FILE")
+exec 2> >(tee -a "$LOG_FILE" >&2)
+
+msg() { echo -e "${!1}[${1}]${NC} ${*:2}"; }
+err() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+cleanup() {
+    local c=$?; [[ $c -ne 0 ]] && err "Installation failed. Check log: $LOG_FILE"
+    [[ -f "${TEMP_DIR:-}/.zshrc.tmp" ]] && rm -f "$TEMP_DIR/.zshrc.tmp"
+    exit $c
+}
+trap cleanup EXIT
+
+show_help() {
+cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS]
+
+Install zsh configuration and dependencies.
+
+Options:
+    -h, --help      Show this help message
+    -v, --version   Show version
+    -d, --dry-run   Show what would be done without executing
+    --no-backup     Skip dotfile backup
+    --no-shell      Skip shell change
+    --debug         Enable debug output
+
+Examples:
+    sudo $SCRIPT_NAME
+    sudo $SCRIPT_NAME --dry-run
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_help; exit 0 ;;
+            -v|--version) echo "$SCRIPT_NAME version $VERSION"; exit 0 ;;
+            -d|--dry-run) DRY_RUN=1; shift ;;
+            --no-backup) NO_BACKUP=1; shift ;;
+            --no-shell) NO_SHELL=1; shift ;;
+            --debug) DEBUG=1; shift ;;
+            *) err "Unknown option: $1"; show_help; exit 1 ;;
+        esac
+    done
+}
 
 check_sudo() {
-    if [[ $EUID -ne 0 ]]; then
-        print_error "This script must be run with sudo or as root"
-        exit 1
-    fi
+    [[ $EUID -eq 0 ]] || { err "This script must be run with sudo or as root"; exit 1; }
+    [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null && { err "Invalid SUDO_USER: $SUDO_USER"; exit 1; }
 }
 
 detect_os() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        OS="macos"; PKG_MGR="brew"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        OS="linux"
-        if [ -f /etc/os-release ]; then
-            . /etc/os-release
-            case "$ID" in
+    case "$(uname -s)" in
+        Linux)
+            OS="linux"
+            [[ -f /etc/os-release ]] || { err "Cannot detect Linux distribution"; exit 1; }
+            source /etc/os-release
+            case "${ID:-}" in
                 ubuntu|debian) PKG_MGR="apt" ;;
-                fedora|rhel|centos|rocky|almalinux) 
-                    if command -v dnf &> /dev/null; then PKG_MGR="dnf"; else PKG_MGR="yum"; fi ;;
+                fedora|rhel|centos|rocky|almalinux) PKG_MGR=$(command -v dnf &>/dev/null && echo "dnf" || command -v yum &>/dev/null && echo "yum" || { err "No supported package manager"; exit 1; }) ;;
                 arch|manjaro) PKG_MGR="pacman" ;;
                 opensuse*|suse*) PKG_MGR="zypper" ;;
-                *) print_error "Unsupported Linux distribution: $ID"; exit 1 ;;
+                *) err "Unsupported Linux distribution: ${ID:-unknown}"; exit 1 ;;
             esac
-        fi
-    else
-        print_error "Unsupported OS: $OSTYPE"; exit 1
-    fi
-    print_info "Detected OS: $OS, Package manager: $PKG_MGR"
+            ;;
+        Darwin)
+            OS="macos"; PKG_MGR="brew"
+            command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
+            ;;
+        *) err "Unsupported OS"; exit 1 ;;
+    esac
+    msg GREEN "Detected OS: $OS, Package manager: $PKG_MGR"
 }
 
-update_packages() {
-    print_info "Updating packages..."
-    case "$PKG_MGR" in
-        brew) su - "$SUDO_USER" -c "brew update && brew upgrade" ;;
-        apt) apt update && apt upgrade -y ;;
-        dnf) dnf update -y ;;
-        yum) yum update -y ;;
-        pacman) pacman -Syu --noconfirm ;;
-        zypper) zypper update -y ;;
+# Package manager command dispatch
+run_pkg() {
+    local action=$1; shift
+    local dry="${DRY_RUN:-0}"
+    
+    [[ "$dry" == "1" ]] && { msg GREEN "[DRY-RUN] Would $action packages"; return 0; }
+    
+    case "${action}_$PKG_MGR" in
+        update_brew) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
+        install_brew) su - "$SUDO_USER" -c "brew install --quiet $*" ;;
+        cleanup_brew) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
+        update_apt) apt-get update -qq && apt-get upgrade -y -qq ;;
+        install_apt) apt-get install -y -qq "$@" ;;
+        cleanup_apt) apt-get autoremove -y -qq && apt-get autoclean ;;
+        update_dnf) dnf update -y -q ;;
+        install_dnf) dnf install -y -q "$@" ;;
+        cleanup_dnf) dnf autoremove -y -q ;;
+        update_yum) yum update -y -q ;;
+        install_yum) yum install -y -q "$@" ;;
+        cleanup_yum) yum autoremove -y -q ;;
+        update_pacman) pacman -Syu --noconfirm --quiet ;;
+        install_pacman) pacman -S --noconfirm --quiet "$@" ;;
+        cleanup_pacman) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null || true; pacman -Sc --noconfirm --quiet ;;
+        update_zypper) zypper update -y -q ;;
+        install_zypper) zypper install -y -q "$@" ;;
+        cleanup_zypper) zypper packages --unneeded | grep "|" | grep -v "Name" | awk -F'|' '{print $3}' | xargs -r zypper remove -y -q 2>/dev/null || true; zypper clean ;;
     esac
 }
 
-install_packages() {
-    print_info "Installing git, zsh, curl, and wget..."
-    case "$PKG_MGR" in
-        brew) su - "$SUDO_USER" -c "brew install git zsh curl wget" ;;
-        apt) apt install -y git zsh curl wget ;;
-        dnf) dnf install -y git zsh curl wget ;;
-        yum) yum install -y git zsh curl wget ;;
-        pacman) pacman -S --noconfirm git zsh curl wget ;;
-        zypper) zypper install -y git zsh curl wget ;;
-    esac
-}
+update_packages() { msg GREEN "Updating packages..."; run_pkg update; }
+
+install_packages() { msg GREEN "Installing packages (git, zsh, curl, wget)..."; run_pkg install git zsh curl wget; }
 
 backup_dotfiles() {
-    print_info "Backing up dotfiles..."
-    REAL_USER="${SUDO_USER:-$(whoami)}"
-    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-    BACKUP_DIR="$REAL_HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
+    [[ "${NO_BACKUP:-0}" == "1" ]] && { msg GREEN "Skipping backup"; return 0; }
+    msg GREEN "Backing up dotfiles..."
     
-    for file in .bashrc .bash_profile .profile .zshrc .zprofile .zlogin .zlogout; do
-        [ -f "$REAL_HOME/$file" ] && cp "$REAL_HOME/$file" "$BACKUP_DIR/" && print_info "Backed up: $file"
-    done
+    local dir="$REAL_HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
+    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would backup to: $dir"; return 0; }
     
-    [ -n "${SUDO_USER:-}" ] && chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$BACKUP_DIR"
-    print_info "Backed up to: $BACKUP_DIR"
+    mkdir -p "$dir" || { err "Failed to create backup directory"; exit 1; }
+    
+    local files=(".bashrc" ".bash_profile" ".profile" ".zshrc" ".zprofile" ".zlogin" ".zlogout")
+    local to_backup=()
+    for f in "${files[@]}"; do [[ -f "$REAL_HOME/$f" ]] && to_backup+=("$f"); done
+    
+    [[ ${#to_backup[@]} -eq 0 ]] && { msg GREEN "No dotfiles to backup"; rmdir "$dir" 2>/dev/null || true; return 0; }
+    
+    tar -czf "$dir/dotfiles.tar.gz" -C "$REAL_HOME" "${to_backup[@]}" 2>/dev/null && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
+    [[ -n "${SUDO_USER:-}" ]] && chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$dir"
+    msg GREEN "Backup complete: $dir"
 }
 
 download_zshrc() {
-    print_info "Downloading .zshrc configuration..."
-    REAL_USER="${SUDO_USER:-$(whoami)}"
-    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-    ZSHRC_URL="https://raw.githubusercontent.com/Oculto54/Utils/main/.zshrc"
-
-    if command -v curl &> /dev/null; then
-        curl -fsSL "$ZSHRC_URL" -o "$REAL_HOME/.zshrc"
-    elif command -v wget &> /dev/null; then
-        wget -q "$ZSHRC_URL" -O "$REAL_HOME/.zshrc"
-    else
-        print_error "Neither curl nor wget found. Cannot download .zshrc"
-        exit 1
-    fi
-
-    if [[ ! -f "$REAL_HOME/.zshrc" ]] || [[ ! -s "$REAL_HOME/.zshrc" ]] || ! grep -q "zsh" "$REAL_HOME/.zshrc"; then
-        print_error "Failed to download or verify .zshrc"
-        exit 1
-    fi
-
-    [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$REAL_HOME/.zshrc"
-    print_info "Successfully installed .zshrc"
+    msg GREEN "Downloading .zshrc configuration..."
+    local url="https://raw.githubusercontent.com/Oculto54/Utils/main/.zshrc"
+    local tmp="$TEMP_DIR/.zshrc.tmp"
+    local target="$REAL_HOME/.zshrc"
+    
+    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would download: $url"; return 0; }
+    
+    local ok=0
+    command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$url" -o "$tmp" && ok=1
+    [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$url" -O "$tmp" && ok=1
+    [[ $ok -eq 0 ]] && { err "Failed to download .zshrc"; exit 1; }
+    
+    [[ -s "$tmp" ]] && grep -qE "(zsh|#!/bin)" "$tmp" 2>/dev/null || { err "Downloaded file invalid"; exit 1; }
+    
+    mv -f "$tmp" "$target" || { err "Failed to install .zshrc"; exit 1; }
+    chmod 644 "$target"
+    [[ -n "${SUDO_USER:-}" ]] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$target"
+    msg GREEN "Successfully installed .zshrc"
 }
 
 create_root_symlinks() {
-    # Only create root symlinks on Linux (macOS doesn't use /root)
-    if [[ "$OS" == "linux" ]]; then
-        print_info "Creating symbolic links for root..."
-        REAL_USER="${SUDO_USER:-$(whoami)}"
-        REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-
-        # Create empty files if they don't exist (will be populated by .zshrc)
-        touch "$REAL_HOME/.p10k.zsh" 2>/dev/null || true
-        touch "$REAL_HOME/.nanorc" 2>/dev/null || true
-
-        # Create symbolic links for root
-        ln -sf "$REAL_HOME/.zshrc" /root/.zshrc
-        ln -sf "$REAL_HOME/.p10k.zsh" /root/.p10k.zsh
-        ln -sf "$REAL_HOME/.nanorc" /root/.nanorc
-
-        print_info "Root symbolic links created"
-    else
-        print_info "Skipping root symlinks (not applicable for $OS)"
-    fi
+    # Only create root symlinks if: Linux + sudo + /root exists
+    [[ "$OS" != "linux" ]] && { msg GREEN "Skipping root symlinks (not Linux)"; return 0; }
+    [[ -z "${SUDO_USER:-}" ]] && { msg GREEN "Skipping root symlinks (not running as sudo)"; return 0; }
+    [[ ! -d "/root" ]] && { msg GREEN "Skipping root symlinks (/root not found)"; return 0; }
+    
+    msg GREEN "Creating symbolic links for root..."
+    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would create symlinks in /root"; return 0; }
+    
+    for f in ".zshrc" ".p10k.zsh" ".nanorc"; do
+        local p="$REAL_HOME/$f"
+        [[ ! -f "$p" ]] && { touch "$p" 2>/dev/null || true; chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$p" 2>/dev/null || true; }
+        [[ -f "$p" ]] && ln -sf "$p" "/root/$f"
+    done
+    msg GREEN "Root symbolic links created"
 }
 
 change_shell() {
-    print_info "Changing shell to zsh..."
-    REAL_USER="${SUDO_USER:-$(whoami)}"
-    ZSH_PATH=$(which zsh)
+    [[ "${NO_SHELL:-0}" == "1" ]] && { msg GREEN "Skipping shell change"; return 0; }
+    msg GREEN "Changing shell to zsh..."
     
-    grep -q "^$ZSH_PATH$" /etc/shells || echo "$ZSH_PATH" >> /etc/shells
+    local zsh_path=$(command -v zsh)
+    [[ -z "$zsh_path" ]] && { err "zsh not found"; exit 1; }
+    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would change shell to: $zsh_path"; return 0; }
+    [[ ! -x "$zsh_path" ]] && { err "zsh not executable"; exit 1; }
     
-    chsh -s "$ZSH_PATH" "$REAL_USER"
-    chsh -s "$ZSH_PATH" root
+    grep -qx "$zsh_path" /etc/shells 2>/dev/null || { echo "$zsh_path" >> /etc/shells; msg GREEN "Added $zsh_path to /etc/shells"; }
     
-    print_info "Shell changed for $REAL_USER and root"
+    local u_shell=$(getent passwd "$REAL_USER" | cut -d: -f7)
+    [[ "$u_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" "$REAL_USER"; msg GREEN "Changed shell for $REAL_USER"; } || msg GREEN "Shell already set for $REAL_USER"
+    
+    local r_shell=$(getent passwd root | cut -d: -f7)
+    [[ "$r_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" root; msg GREEN "Changed shell for root"; } || msg GREEN "Shell already set for root"
 }
 
 verify_installation() {
-    print_info "Verifying..."
-    command -v git &> /dev/null && print_info "Git: $(git --version)" || { print_error "Git failed"; exit 1; }
-    command -v zsh &> /dev/null && print_info "Zsh: $(zsh --version)" || { print_error "Zsh failed"; exit 1; }
+    msg GREEN "Verifying installation..."
+    local e=0
+    command -v git &>/dev/null && msg GREEN "Git: $(git --version 2>&1 | head -1)" || { err "Git not found"; ((e++)); }
+    command -v zsh &>/dev/null && msg GREEN "Zsh: $(zsh --version 2>&1 | head -1)" || { err "Zsh not found"; ((e++)); }
+    [[ -f "$REAL_HOME/.zshrc" ]] && msg GREEN ".zshrc: installed ($(wc -l < "$REAL_HOME/.zshrc") lines)" || { err ".zshrc not found"; ((e++)); }
+    [[ $e -gt 0 ]] && { err "Verification failed with $e error(s)"; exit 1; }
+    msg GREEN "All checks passed"
 }
 
+cleanup_packages() { msg GREEN "Cleaning up unnecessary packages..."; run_pkg cleanup; }
+
 main() {
+    parse_args "$@"
+    readonly TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
+    
+    readonly REAL_USER="${SUDO_USER:-$(whoami)}"
+    readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+    [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
+    
+    msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
+    
     check_sudo
     detect_os
     update_packages
     install_packages
     backup_dotfiles
     download_zshrc
+    create_root_symlinks
     change_shell
     verify_installation
-    create_root_symlinks
-
-    print_info "Installation complete! Log out and back in to use zsh."
+    cleanup_packages
+    
+    msg GREEN "=========================================="
+    msg GREEN "Installation complete!"
+    msg GREEN "=========================================="
+    msg GREEN "Log saved to: $LOG_FILE"
+    msg GREEN "Next steps: 1. Log out and back in  2. Run 'zsh'"
+    [[ "${NO_BACKUP:-0}" != "1" ]] && ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1 | xargs -I {} msg GREEN "Backup: {}"
 }
 
 main "$@"
