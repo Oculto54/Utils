@@ -12,6 +12,8 @@ readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
 exec 1> >(tee -a "$LOG_FILE")
 exec 2> >(tee -a "$LOG_FILE" >&2)
 
+debug() { echo "[DEBUG] $*" >&2; }
+
 msg() { echo -e "${!1}[${1}]${NC} ${*:2}"; }
 err() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
@@ -57,8 +59,11 @@ parse_args() {
 }
 
 check_sudo() {
-    [[ $EUID -eq 0 ]] || { err "This script must be run with sudo or as root"; exit 1; }
-    [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null && { err "Invalid SUDO_USER: $SUDO_USER"; exit 1; }
+debug "check_sudo: entering, EUID=$EUID, SUDO_USER=${SUDO_USER:-<unset>}"
+[[ $EUID -eq 0 ]] || { err "This script must be run with sudo or as root"; exit 1; }
+debug "check_sudo: passed root check"
+[[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null && { err "Invalid SUDO_USER: $SUDO_USER"; exit 1; }
+debug "check_sudo: completed successfully"
 }
 
 detect_os() {
@@ -206,33 +211,50 @@ verify_installation() {
 cleanup_packages() { msg GREEN "Cleaning up unnecessary packages..."; run_pkg cleanup; }
 
 main() {
-    parse_args "$@"
-    readonly TEMP_DIR=$(mktemp -d)
-    trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
-    
-    readonly REAL_USER="${SUDO_USER:-$(whoami)}"
-    readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-    [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
-    
-    msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
-    
-    check_sudo
-    detect_os
-    update_packages
-    install_packages
-    backup_dotfiles
-    download_zshrc
-    create_root_symlinks
-    change_shell
-    verify_installation
-    cleanup_packages
-    
-    msg GREEN "=========================================="
-    msg GREEN "Installation complete!"
-    msg GREEN "=========================================="
-    msg GREEN "Log saved to: $LOG_FILE"
-    msg GREEN "Next steps: 1. Log out and back in  2. Run 'zsh'"
-    [[ "${NO_BACKUP:-0}" != "1" ]] && ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1 | xargs -I {} msg GREEN "Backup: {}"
+debug "main: starting script"
+parse_args "$@"
+debug "main: parsed args"
+readonly TEMP_DIR=$(mktemp -d)
+debug "main: created temp dir: $TEMP_DIR"
+trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
+
+readonly REAL_USER="${SUDO_USER:-$(whoami)}"
+debug "main: REAL_USER=$REAL_USER"
+readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+debug "main: REAL_HOME=$REAL_HOME"
+[[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
+
+msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
+debug "main: about to call check_sudo"
+
+check_sudo
+debug "main: check_sudo completed, about to call detect_os"
+detect_os
+debug "main: detect_os completed"
+update_packages
+debug "main: update_packages completed"
+install_packages
+debug "main: install_packages completed"
+backup_dotfiles
+debug "main: backup_dotfiles completed"
+download_zshrc
+debug "main: download_zshrc completed"
+create_root_symlinks
+debug "main: create_root_symlinks completed"
+change_shell
+debug "main: change_shell completed"
+verify_installation
+debug "main: verify_installation completed"
+cleanup_packages
+debug "main: cleanup_packages completed"
+
+msg GREEN "=========================================="
+msg GREEN "Installation complete!"
+msg GREEN "=========================================="
+msg GREEN "Log saved to: $LOG_FILE"
+msg GREEN "Next steps: 1. Log out and back in 2. Run 'zsh'"
+[[ "${NO_BACKUP:-0}" != "1" ]] && ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1 | xargs -I {} msg GREEN "Backup: {}"
+debug "main: script completed"
 }
 
 main "$@"
