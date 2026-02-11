@@ -74,8 +74,14 @@ parse_args() {
 }
 
 check_sudo() {
-[[ $EUID -eq 0 ]] || { err "This script must be run with sudo or as root"; exit 1; }
-[[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null && { err "Invalid SUDO_USER: $SUDO_USER"; exit 1; }
+if [[ $EUID -ne 0 ]]; then
+err "This script must be run with sudo or as root (EUID=$EUID)"
+exit 1
+fi
+if [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null; then
+err "Invalid SUDO_USER: ${SUDO_USER}"
+exit 1
+fi
 }
 
 detect_os() {
