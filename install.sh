@@ -9,13 +9,18 @@ readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
-exec 1> >(tee -a "$LOG_FILE")
-exec 2> >(tee -a "$LOG_FILE" >&2)
+init_log() { > "$LOG_FILE"; }
 
 debug() { [[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] $*" >&2; }
 
-msg() { echo -e "${!1}[${1}]${NC} ${*:2}"; }
-err() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+msg() { 
+echo -e "${!1}[${1}]${NC} ${*:2}"
+echo "$(date '+%Y-%m-%d %H:%M:%S') [${1}] ${*:2}" >> "$LOG_FILE"
+}
+err() { 
+echo -e "${RED}[ERROR]${NC} $*" >&2
+echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $*" >> "$LOG_FILE"
+}
 
 cleanup() {
     local c=$?; [[ $c -ne 0 ]] && err "Installation failed. Check log: $LOG_FILE"
@@ -211,6 +216,7 @@ verify_installation() {
 cleanup_packages() { msg GREEN "Cleaning up unnecessary packages..."; run_pkg cleanup; }
 
 main() {
+init_log
 debug "main: starting script"
 parse_args "$@"
 debug "main: parsed args"
