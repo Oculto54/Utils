@@ -74,7 +74,6 @@ parse_args() {
 }
 
 check_sudo() {
-echo "[DEBUG] check_sudo: EUID=$EUID, SUDO_USER=${SUDO_USER:-<unset>}" >&2
 if [[ $EUID -ne 0 ]]; then
 err "This script must be run with sudo or as root (EUID=$EUID)"
 exit 1
@@ -83,7 +82,6 @@ if [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null; then
 err "Invalid SUDO_USER: ${SUDO_USER}"
 exit 1
 fi
-echo "[DEBUG] check_sudo: passed" >&2
 }
 
 detect_os() {
@@ -241,20 +239,17 @@ readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
 
 msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
-[[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] About to call check_sudo" >&2
 
-check_sudo || { err "check_sudo failed"; exit 1; }
-[[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] check_sudo completed" >&2
-detect_os || { err "detect_os failed"; exit 1; }
-[[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] detect_os completed" >&2
-update_packages || { err "update_packages failed"; exit 1; }
-install_packages || { err "install_packages failed"; exit 1; }
-backup_dotfiles || { err "backup_dotfiles failed"; exit 1; }
-download_zshrc || { err "download_zshrc failed"; exit 1; }
-create_root_symlinks || { err "create_root_symlinks failed"; exit 1; }
-change_shell || { err "change_shell failed"; exit 1; }
-verify_installation || { err "verify_installation failed"; exit 1; }
-cleanup_packages || { err "cleanup_packages failed"; exit 1; }
+check_sudo
+detect_os
+update_packages
+install_packages
+backup_dotfiles
+download_zshrc
+create_root_symlinks
+change_shell
+verify_installation
+cleanup_packages
 
 msg GREEN "=========================================="
 msg GREEN "Installation complete!"
