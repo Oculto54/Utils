@@ -5,7 +5,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="${BASH_SOURCE[0]:+$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [[ -n "${BASH_SOURCE[0]:-}" ]] && readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")" || readonly SCRIPT_NAME="install.sh"
 readonly SCRIPT_VERSION="1.0.0"
-readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
+readonly LOG_FILE=$(mktemp /tmp/install.XXXXXX.log)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
@@ -44,7 +44,7 @@ get_user_home() {
 
 get_user_shell() {
     local user="$1"
-    if [[ "$OS" == "macos" ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
         dscl . -read /Users/"$user" UserShell 2>/dev/null | awk '{print $2}'
     else
         getent passwd "$user" 2>/dev/null | cut -d: -f7
@@ -97,10 +97,16 @@ if [[ $EUID -ne 0 ]]; then
 err "This script must be run with sudo or as root (EUID=$EUID)"
 exit 1
 fi
-if [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null; then
-err "Invalid SUDO_USER: ${SUDO_USER}"
-exit 1
-fi
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        if [[ ! "$SUDO_USER" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            err "Invalid SUDO_USER format: ${SUDO_USER}"
+            exit 1
+        fi
+        if ! id "$SUDO_USER" &>/dev/null; then
+            err "Invalid SUDO_USER: ${SUDO_USER}"
+            exit 1
+        fi
+    fi
 }
 
 detect_os() {
@@ -135,7 +141,7 @@ run_pkg() {
     
     case "${action}_$PKG_MGR" in
         update_brew) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
-        install_brew) su - "$SUDO_USER" -c "brew install --quiet $*" ;;
+        install_brew) su - "$SUDO_USER" -c "brew install --quiet $(printf '%q ' "$@")" ;;
         cleanup_brew) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
 update_apt) apt-get update && apt-get upgrade -y ;;
 install_apt) apt-get install -y "$@" ;;
@@ -175,7 +181,11 @@ backup_dotfiles() {
     [[ ${#to_backup[@]} -eq 0 ]] && { msg GREEN "No dotfiles to backup"; rmdir "$dir" 2>/dev/null || true; return 0; }
     
     tar -czf "$dir/dotfiles.tar.gz" -C "$REAL_HOME" "${to_backup[@]}" 2>/dev/null && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
-    [[ -n "${SUDO_USER:-}" ]] && chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$dir"
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        local user_group
+        user_group=$(id -gn "$SUDO_USER" 2>/dev/null) || { err "Failed to get group for $SUDO_USER"; return 1; }
+        chown -R "${SUDO_USER}:${user_group}" "$dir"
+    fi
     msg GREEN "Backup complete: $dir"
 }
 
@@ -196,7 +206,11 @@ download_zshrc() {
     
     mv -f "$tmp" "$target" || { err "Failed to install .zshrc"; exit 1; }
     chmod 644 "$target"
-    [[ -n "${SUDO_USER:-}" ]] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$target"
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        local user_group
+        user_group=$(id -gn "$SUDO_USER" 2>/dev/null) || { err "Failed to get group for $SUDO_USER"; exit 1; }
+        chown "${SUDO_USER}:${user_group}" "$target"
+    fi
     msg GREEN "Successfully installed .zshrc"
 }
 
@@ -211,7 +225,13 @@ create_root_symlinks() {
     
     for f in ".zshrc" ".p10k.zsh" ".nanorc"; do
         local p="$REAL_HOME/$f"
-        [[ ! -f "$p" ]] && { touch "$p" 2>/dev/null || true; chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$p" 2>/dev/null || true; }
+        if [[ ! -f "$p" ]]; then
+            touch "$p" 2>/dev/null || continue
+            if [[ -n "${SUDO_USER:-}" ]]; then
+                local user_group
+                user_group=$(id -gn "$SUDO_USER" 2>/dev/null) && chown "${SUDO_USER}:${user_group}" "$p"
+            fi
+        fi
         [[ -f "$p" ]] && ln -sf "$p" "/root/$f"
     done
     msg GREEN "Root symbolic links created"
@@ -226,7 +246,15 @@ change_shell() {
     [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would change shell to: $zsh_path"; return 0; }
     [[ ! -x "$zsh_path" ]] && { err "zsh not executable"; exit 1; }
     
-    grep -qx "$zsh_path" /etc/shells 2>/dev/null || { echo "$zsh_path" >> /etc/shells; msg GREEN "Added $zsh_path to /etc/shells"; }
+    if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
+        if [[ "$zsh_path" =~ ^/[^[:space:]]+/zsh$ ]]; then
+            echo "$zsh_path" >> /etc/shells
+            msg GREEN "Added $zsh_path to /etc/shells"
+        else
+            err "Invalid zsh path: $zsh_path"
+            exit 1
+        fi
+    fi
     
     local u_shell=$(get_user_shell "$REAL_USER")
     [[ "$u_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" "$REAL_USER"; msg GREEN "Changed shell for $REAL_USER"; } || msg GREEN "Shell already set for $REAL_USER"
