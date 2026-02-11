@@ -9,17 +9,27 @@ readonly LOG_FILE="/tmp/install_$(date +%Y%m%d_%H%M%S).log"
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
-init_log() { > "$LOG_FILE"; }
+log_msg() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"; }
 
 debug() { [[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] $*" >&2; }
 
+get_color() {
+case "$1" in
+RED) echo "$RED" ;;
+GREEN) echo "$GREEN" ;;
+YELLOW) echo "$YELLOW" ;;
+BLUE) echo "$BLUE" ;;
+esac
+}
+
 msg() { 
-echo -e "${!1}[${1}]${NC} ${*:2}"
-echo "$(date '+%Y-%m-%d %H:%M:%S') [${1}] ${*:2}" >> "$LOG_FILE"
+local color=$(get_color "$1") text="${*:2}"
+printf "%b[%s]%b %s\n" "$color" "$1" "$NC" "$text"
+log_msg "[$1] $text"
 }
 err() { 
-echo -e "${RED}[ERROR]${NC} $*" >&2
-echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $*" >> "$LOG_FILE"
+printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$*" >&2
+log_msg "[ERROR] $*"
 }
 
 cleanup() {
@@ -64,11 +74,8 @@ parse_args() {
 }
 
 check_sudo() {
-debug "check_sudo: entering, EUID=$EUID, SUDO_USER=${SUDO_USER:-<unset>}"
 [[ $EUID -eq 0 ]] || { err "This script must be run with sudo or as root"; exit 1; }
-debug "check_sudo: passed root check"
 [[ -n "${SUDO_USER:-}" ]] && ! id "$SUDO_USER" &>/dev/null && { err "Invalid SUDO_USER: $SUDO_USER"; exit 1; }
-debug "check_sudo: completed successfully"
 }
 
 detect_os() {
@@ -216,43 +223,27 @@ verify_installation() {
 cleanup_packages() { msg GREEN "Cleaning up unnecessary packages..."; run_pkg cleanup; }
 
 main() {
-init_log
-debug "main: starting script"
-parse_args "$@"
-debug "main: parsed args"
 readonly TEMP_DIR=$(mktemp -d)
-debug "main: created temp dir: $TEMP_DIR"
 trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
 
+parse_args "$@"
+
 readonly REAL_USER="${SUDO_USER:-$(whoami)}"
-debug "main: REAL_USER=$REAL_USER"
 readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-debug "main: REAL_HOME=$REAL_HOME"
 [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
 
 msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
-debug "main: about to call check_sudo"
 
 check_sudo
-debug "main: check_sudo completed, about to call detect_os"
 detect_os
-debug "main: detect_os completed"
 update_packages
-debug "main: update_packages completed"
 install_packages
-debug "main: install_packages completed"
 backup_dotfiles
-debug "main: backup_dotfiles completed"
 download_zshrc
-debug "main: download_zshrc completed"
 create_root_symlinks
-debug "main: create_root_symlinks completed"
 change_shell
-debug "main: change_shell completed"
 verify_installation
-debug "main: verify_installation completed"
 cleanup_packages
-debug "main: cleanup_packages completed"
 
 msg GREEN "=========================================="
 msg GREEN "Installation complete!"
@@ -264,7 +255,6 @@ local last_backup
 last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
 [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
 fi
-debug "main: script completed"
 }
 
 main "$@"
