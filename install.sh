@@ -32,6 +32,25 @@ printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$*" >&2
 log_msg "[ERROR] $*"
 }
 
+# Cross-platform user info functions
+get_user_home() {
+    local user="$1"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        dscl . -read /Users/"$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}'
+    else
+        getent passwd "$user" 2>/dev/null | cut -d: -f6
+    fi
+}
+
+get_user_shell() {
+    local user="$1"
+    if [[ "$OS" == "macos" ]]; then
+        dscl . -read /Users/"$user" UserShell 2>/dev/null | awk '{print $2}'
+    else
+        getent passwd "$user" 2>/dev/null | cut -d: -f7
+    fi
+}
+
 cleanup() {
     local c=$?; [[ $c -ne 0 ]] && err "Installation failed. Check log: $LOG_FILE"
     [[ -f "${TEMP_DIR:-}/.zshrc.tmp" ]] && rm -f "$TEMP_DIR/.zshrc.tmp"
@@ -209,11 +228,15 @@ change_shell() {
     
     grep -qx "$zsh_path" /etc/shells 2>/dev/null || { echo "$zsh_path" >> /etc/shells; msg GREEN "Added $zsh_path to /etc/shells"; }
     
-    local u_shell=$(getent passwd "$REAL_USER" | cut -d: -f7)
+    local u_shell=$(get_user_shell "$REAL_USER")
     [[ "$u_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" "$REAL_USER"; msg GREEN "Changed shell for $REAL_USER"; } || msg GREEN "Shell already set for $REAL_USER"
-    
-    local r_shell=$(getent passwd root | cut -d: -f7)
-    [[ "$r_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" root; msg GREEN "Changed shell for root"; } || msg GREEN "Shell already set for root"
+
+    if [[ "$OS" == "macos" ]]; then
+        msg GREEN "Skipping root shell change (not needed on macOS)"
+    else
+        local r_shell=$(get_user_shell "root")
+        [[ "$r_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" root; msg GREEN "Changed shell for root"; } || msg GREEN "Shell already set for root"
+    fi
 }
 
 verify_installation() {
@@ -235,13 +258,13 @@ trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
 parse_args "$@"
 
 readonly REAL_USER="${SUDO_USER:-$(whoami)}"
-readonly REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-[[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
+    readonly REAL_HOME=$(get_user_home "$REAL_USER")
+    [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
 
-msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
+    msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
 
-check_sudo
-detect_os
+    check_sudo
+    detect_os
 update_packages
 install_packages
 backup_dotfiles
