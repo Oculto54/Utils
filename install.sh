@@ -5,7 +5,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="${BASH_SOURCE[0]:+$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [[ -n "${BASH_SOURCE[0]:-}" ]] && readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")" || readonly SCRIPT_NAME="install.sh"
 readonly SCRIPT_VERSION="1.0.0"
-readonly LOG_FILE=$(mktemp /tmp/install.XXXXXX.log)
+readonly LOG_FILE=$(mktemp -t install.log.XXXXXX)
 readonly PLATFORM=$(uname -s)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
