@@ -136,12 +136,27 @@ detect_os() {
 run_pkg() {
     local action=$1; shift
     local dry="${DRY_RUN:-0}"
-    
+    local -a packages=("$@")
+
     [[ "$dry" == "1" ]] && { msg GREEN "[DRY-RUN] Would $action packages"; return 0; }
-    
+
+    # Build safe package list for brew
+    local safe_pkgs=""
+    if [[ ${#packages[@]} -gt 0 ]]; then
+        for pkg in "${packages[@]}"; do
+            # Validate package name: alphanumeric, hyphens, dots only
+            if [[ "$pkg" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+                safe_pkgs="${safe_pkgs}${safe_pkgs:+ }${pkg}"
+            else
+                err "Invalid package name: $pkg"
+                return 1
+            fi
+        done
+    fi
+
     case "${action}_$PKG_MGR" in
         update_brew) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
-        install_brew) su - "$SUDO_USER" -c "brew install --quiet $(printf '%q ' "$@")" ;;
+        install_brew) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
         cleanup_brew) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
 update_apt) apt-get update && apt-get upgrade -y ;;
 install_apt) apt-get install -y "$@" ;;
