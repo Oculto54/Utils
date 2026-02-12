@@ -2,16 +2,9 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="${BASH_SOURCE[0]:+$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-[[ -n "${BASH_SOURCE[0]:-}" ]] && readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")" || readonly SCRIPT_NAME="install.sh"
-readonly SCRIPT_VERSION="1.0.0"
 readonly PLATFORM=$(uname -s)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
-
-log_msg() { :; }
-
-debug() { [[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] $*" >&2; }
 
 get_color() {
 case "$1" in
@@ -111,11 +104,9 @@ show_phase1_message() {
     msg GREEN " 3. Run this script again to complete setup"
     msg GREEN ""
     msg YELLOW "Marker file created: ~/.phase1-marker"
-    if [[ "${NO_BACKUP:-0}" != "1" ]]; then
-        local last_backup
-        last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
-        [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
-    fi
+    local last_backup
+    last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
+    [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
 }
 
 # Show Phase 2 completion message
@@ -133,11 +124,9 @@ show_complete_message() {
     msg GREEN "Installation Complete!"
     msg GREEN "=========================================="
     msg GREEN "All done! Log out and back in, then run: zsh"
-    if [[ "${NO_BACKUP:-0}" != "1" ]]; then
-        local last_backup
-        last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
-        [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
-    fi
+    local last_backup
+    last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
+    [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
 }
 
 cleanup() {
@@ -146,40 +135,6 @@ cleanup() {
     exit $c
 }
 trap cleanup EXIT
-
-show_help() {
-cat << EOF
-Usage: $SCRIPT_NAME [OPTIONS]
-
-Install zsh configuration and dependencies.
-
-Options:
-    -h, --help      Show this help message
-    -v, --version   Show version
-    -d, --dry-run   Show what would be done without executing
-    --no-backup     Skip dotfile backup
-    --no-shell      Skip shell change
-    --debug         Enable debug output
-
-Examples:
-    sudo $SCRIPT_NAME
-    sudo $SCRIPT_NAME --dry-run
-EOF
-}
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -h|--help) show_help; exit 0 ;;
-            -v|--version) echo "$SCRIPT_NAME version $SCRIPT_VERSION"; exit 0 ;;
-            -d|--dry-run) DRY_RUN=1; shift ;;
-            --no-backup) NO_BACKUP=1; shift ;;
-            --no-shell) NO_SHELL=1; shift ;;
-            --debug) DEBUG=1; shift ;;
-            *) err "Unknown option: $1"; show_help; exit 1 ;;
-        esac
-    done
-}
 
 check_sudo() {
 if [[ $EUID -ne 0 ]]; then
@@ -244,10 +199,7 @@ detect_os() {
 # Package manager command dispatch
 run_pkg() {
     local action=$1; shift
-    local dry="${DRY_RUN:-0}"
     local -a packages=("$@")
-
-    [[ "$dry" == "1" ]] && { msg GREEN "[DRY-RUN] Would $action packages"; return 0; }
 
     # Build safe package list for brew
     local safe_pkgs=""
@@ -290,12 +242,10 @@ update_packages() { msg GREEN "Updating packages..."; run_pkg update; }
 install_packages() { msg GREEN "Installing packages (git, zsh, curl, wget)..."; run_pkg install git zsh curl wget; }
 
 backup_dotfiles() {
-    [[ "${NO_BACKUP:-0}" == "1" ]] && { msg GREEN "Skipping backup"; return 0; }
     msg GREEN "Backing up dotfiles..."
-    
+
     local dir="$REAL_HOME/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
-    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would backup to: $dir"; return 0; }
-    
+
     mkdir -p "$dir" || { err "Failed to create backup directory"; exit 1; }
     
     local files=(".bashrc" ".bash_profile" ".profile" ".zshrc" ".zprofile" ".zlogin" ".zlogout")
@@ -317,8 +267,6 @@ download_zshrc() {
     local tmp="$TEMP_DIR/.zshrc.tmp"
     local checksum_tmp="$TEMP_DIR/.zshrc.sha256.tmp"
     local target="$REAL_HOME/.zshrc"
-
-    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would download: $url"; return 0; }
 
     # Download .zshrc
     local ok=0
@@ -382,7 +330,6 @@ create_root_symlinks() {
     [[ "$REAL_HOME" == "/root" ]] && { msg GREEN "Skipping root symlinks (home is /root)"; return 0; }
 
     msg GREEN "Creating symbolic links for root..."
-    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would create symlinks in /root"; return 0; }
 
     local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
     local target
@@ -421,12 +368,10 @@ create_root_symlinks() {
 }
 
 change_shell() {
-    [[ "${NO_SHELL:-0}" == "1" ]] && { msg GREEN "Skipping shell change"; return 0; }
     msg GREEN "Changing shell to zsh..."
-    
+
     local zsh_path=$(command -v zsh)
     [[ -z "$zsh_path" ]] && { err "zsh not found"; exit 1; }
-    [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would change shell to: $zsh_path"; return 0; }
     [[ ! -x "$zsh_path" ]] && { err "zsh not executable"; exit 1; }
     
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
@@ -471,8 +416,6 @@ cleanup_packages() { msg GREEN "Cleaning up unnecessary packages..."; run_pkg cl
 main() {
     readonly TEMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
-
-    parse_args "$@"
 
     readonly REAL_USER="${SUDO_USER:-$(whoami)}"
     readonly REAL_HOME=$(get_user_home "$REAL_USER")
