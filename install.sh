@@ -111,11 +111,13 @@ fi
 
 detect_os() {
     case "$(uname -s)" in
-        Linux)
-            OS="linux"
-            [[ -f /etc/os-release ]] || { err "Cannot detect Linux distribution"; exit 1; }
-            source /etc/os-release
-            case "${ID:-}" in
+    Linux)
+        OS="linux"
+        [[ -f /etc/os-release ]] || { err "Cannot detect Linux distribution"; exit 1; }
+        source /etc/os-release
+        # Validate distribution ID to prevent injection from compromised os-release
+        [[ "${ID:-}" =~ ^[a-zA-Z0-9._-]+$ ]] || { err "Invalid distribution ID format: ${ID:-unknown}"; exit 1; }
+        case "${ID:-}" in
                 ubuntu|debian) PKG_MGR="apt" ;;
                 fedora|rhel|centos|rocky|almalinux) PKG_MGR=$(command -v dnf &>/dev/null && echo "dnf" || command -v yum &>/dev/null && echo "yum" || { err "No supported package manager"; exit 1; }) ;;
                 arch|manjaro) PKG_MGR="pacman" ;;
