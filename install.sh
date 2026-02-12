@@ -297,22 +297,38 @@ create_root_symlinks() {
     [[ "$OS" != "linux" ]] && { msg GREEN "Skipping root symlinks (not Linux)"; return 0; }
     [[ -z "${SUDO_USER:-}" ]] && { msg GREEN "Skipping root symlinks (not running as sudo)"; return 0; }
     [[ ! -d "/root" ]] && { msg GREEN "Skipping root symlinks (/root not found)"; return 0; }
-    
+    # Prevent symlink loop if REAL_HOME is /root
+    [[ "$REAL_HOME" == "/root" ]] && { msg GREEN "Skipping root symlinks (home is /root)"; return 0; }
+
     msg GREEN "Creating symbolic links for root..."
     [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would create symlinks in /root"; return 0; }
-    
-    for f in ".zshrc" ".p10k.zsh" ".nanorc"; do
-        local p="$REAL_HOME/$f"
-        if [[ ! -f "$p" ]]; then
-            touch "$p" 2>/dev/null || continue
-            if [[ -n "${SUDO_USER:-}" ]]; then
-                local user_group
-                user_group=$(id -gn "$SUDO_USER" 2>/dev/null) && chown "${SUDO_USER}:${user_group}" "$p"
+
+    local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
+    local target created_count=0
+
+    for f in "${files[@]}"; do
+        target="$REAL_HOME/$f"
+
+        # Security: Verify target is within REAL_HOME (prevent traversal)
+        [[ "$target" != "$REAL_HOME"/* ]] && { err "Security: Target $target outside home directory"; continue; }
+
+        # Only symlink existing regular files (skip if missing or not a regular file)
+        # This prevents TOCTOU - we don't create files, only symlink existing ones
+        if [[ -f "$target" ]]; then
+            # Verify file is owned by SUDO_USER (prevent symlink to attacker-controlled file)
+            local file_owner
+            file_owner=$(stat -c '%U' "$target" 2>/dev/null) || file_owner=$(stat -f '%Su' "$target" 2>/dev/null)
+            if [[ "$file_owner" != "$SUDO_USER" ]]; then
+                err "Security: $target not owned by $SUDO_USER (owner: $file_owner)"
+                continue
             fi
+
+            # Create symlink atomically
+            ln -sf "$target" "/root/$f" && ((created_count++))
         fi
-        [[ -f "$p" ]] && ln -sf "$p" "/root/$f"
     done
-    msg GREEN "Root symbolic links created"
+
+    [[ $created_count -gt 0 ]] && msg GREEN "Created $created_count symbolic link(s) in /root"
 }
 
 change_shell() {
