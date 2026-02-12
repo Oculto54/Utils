@@ -129,55 +129,55 @@ check_symlinks_status() {
     return 0
 }
 
-# Show Phase 1 completion message
-show_phase1_message() {
+# Generic function to show completion messages
+show_completion_message() {
+    local type="$1"  # "phase1", "phase2", or "complete"
+    
     msg GREEN ""
     msg GREEN "=========================================="
-    msg GREEN "Phase 1 Complete!"
+    case "$type" in
+        phase1)
+            msg GREEN "Phase 1 Complete!"
+            msg GREEN ""
+            msg GREEN "Next steps:"
+            msg GREEN " 1. Run: exec zsh -l"
+            msg GREEN " 2. Run: p10k configure"
+            msg GREEN " 3. Run this script again to complete setup"
+            msg GREEN ""
+            msg YELLOW "Note: Marker file ~/.phase1-marker created"
+            msg YELLOW "      (This tracks your setup progress)"
+            ;;
+        phase2)
+            msg GREEN "Phase 2 Complete!"
+            msg GREEN ""
+            msg GREEN "Root symlinks created successfully!"
+            msg GREEN "All dotfiles are now properly linked to /root/"
+            msg GREEN ""
+            msg GREEN "You're all set! Log out and back in."
+            ;;
+        complete)
+            msg GREEN "Installation Complete!"
+            msg GREEN ""
+            msg GREEN "Everything is configured and ready!"
+            msg GREEN ""
+            msg GREEN "Next steps:"
+            msg GREEN " 1. Log out and log back in"
+            msg GREEN " 2. Run: zsh"
+            msg GREEN ""
+            ;;
+    esac
     msg GREEN "=========================================="
     msg GREEN ""
-    msg GREEN "Next steps:"
-    msg GREEN " 1. Run: exec zsh -l"
-    msg GREEN " 2. Run: p10k configure"
-    msg GREEN " 3. Run this script again to complete setup"
-    msg GREEN ""
-    msg YELLOW "Note: Marker file ~/.phase1-marker created"
-    msg YELLOW "      (This tracks your setup progress)"
+    
     local last_backup
     last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
     [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
 }
 
-# Show Phase 2 completion message
-show_phase2_complete() {
-    msg GREEN ""
-    msg GREEN "=========================================="
-    msg GREEN "Phase 2 Complete!"
-    msg GREEN "=========================================="
-    msg GREEN ""
-    msg GREEN "Root symlinks created successfully!"
-    msg GREEN "All dotfiles are now properly linked to /root/"
-    msg GREEN ""
-    msg GREEN "You're all set! Log out and back in."
-}
-
-# Show normal completion message
-show_complete_message() {
-    msg GREEN ""
-    msg GREEN "=========================================="
-    msg GREEN "Installation Complete!"
-    msg GREEN "=========================================="
-    msg GREEN ""
-    msg GREEN "Everything is configured and ready!"
-    msg GREEN ""
-    msg GREEN "Next steps:"
-    msg GREEN " 1. Log out and log back in"
-    msg GREEN " 2. Run: zsh"
-    msg GREEN ""
-    local last_backup
-    last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
-    [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
-}
+# Convenience functions for backward compatibility
+show_phase1_message() { show_completion_message "phase1"; }
+show_phase2_complete() { show_completion_message "phase2"; }
+show_complete_message() { show_completion_message "complete"; }
 
 cleanup() {
     local c=$?; [[ $c -ne 0 ]] && err "Installation failed."
@@ -256,37 +256,23 @@ run_pkg() {
         fi
     fi
 
-    case "$PKG_MGR" in
-        brew)
-            case "$action" in
-                update) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
-                install) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
-                cleanup) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
-            esac ;;
-        apt)
-            case "$action" in
-                update) apt-get update && apt-get upgrade -y ;;
-                install) apt-get install -y "$@" ;;
-                cleanup) apt-get autoremove -y && apt-get autoclean ;;
-            esac ;;
-        dnf|yum)
-            case "$action" in
-                update) "$PKG_MGR" update -y ;;
-                install) "$PKG_MGR" install -y "$@" ;;
-                cleanup) "$PKG_MGR" autoremove -y ;;
-            esac ;;
-        pacman)
-            case "$action" in
-                update) pacman -Syu --noconfirm ;;
-                install) pacman -S --noconfirm "$@" ;;
-                cleanup) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null; pacman -Sc --noconfirm ;;
-            esac ;;
-        zypper)
-            case "$action" in
-                update) zypper update -y ;;
-                install) zypper install -y "$@" ;;
-                cleanup) zypper packages --unneeded | awk -F'|' 'NR>2 && $3 ~ /[^[:space:]]/ {print $3}' | xargs -r zypper remove -y 2>/dev/null; zypper clean ;;
-            esac ;;
+    case "$PKG_MGR-$action" in
+        brew-update) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
+        brew-install) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
+        brew-cleanup) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
+        apt-update) apt-get update && apt-get upgrade -y ;;
+        apt-install) apt-get install -y "$@" ;;
+        apt-cleanup) apt-get autoremove -y && apt-get autoclean ;;
+        dnf-update|yum-update) "$PKG_MGR" update -y ;;
+        dnf-install|yum-install) "$PKG_MGR" install -y "$@" ;;
+        dnf-cleanup|yum-cleanup) "$PKG_MGR" autoremove -y ;;
+        pacman-update) pacman -Syu --noconfirm ;;
+        pacman-install) pacman -S --noconfirm "$@" ;;
+        pacman-cleanup) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null; pacman -Sc --noconfirm ;;
+        zypper-update) zypper update -y ;;
+        zypper-install) zypper install -y "$@" ;;
+        zypper-cleanup) zypper packages --unneeded | awk -F'|' 'NR>2 && $3 ~ /[^[:space:]]/ {print $3}' | xargs -r zypper remove -y 2>/dev/null; zypper clean ;;
+        *) err "Unsupported package manager action: $PKG_MGR-$action"; return 1 ;;
     esac
 }
 
