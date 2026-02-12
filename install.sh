@@ -98,12 +98,30 @@ err "This script must be run with sudo or as root (EUID=$EUID)"
 exit 1
 fi
     if [[ -n "${SUDO_USER:-}" ]]; then
+        # Validate username format while preventing path traversal
+        # Rejects: .., /, . (hidden files), leading/trailing dots, path patterns
+        if [[ "$SUDO_USER" == *".."* ]]; then
+            err "SUDO_USER contains path traversal pattern: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ "$SUDO_USER" == */* ]]; then
+            err "SUDO_USER contains path separator: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ "$SUDO_USER" == .* ]]; then
+            err "SUDO_USER starts with a dot: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ "$SUDO_USER" == *. ]]; then
+            err "SUDO_USER ends with a dot: ${SUDO_USER}"
+            exit 1
+        fi
         if [[ ! "$SUDO_USER" =~ ^[a-zA-Z0-9._-]+$ ]]; then
             err "Invalid SUDO_USER format: ${SUDO_USER}"
             exit 1
         fi
         if ! id "$SUDO_USER" &>/dev/null; then
-            err "Invalid SUDO_USER: ${SUDO_USER}"
+            err "Invalid SUDO_USER: user does not exist: ${SUDO_USER}"
             exit 1
         fi
     fi
