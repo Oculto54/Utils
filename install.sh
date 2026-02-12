@@ -6,82 +6,39 @@ readonly PLATFORM=$(uname -s)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
+get_color() {
+case "$1" in
+RED) echo "$RED" ;;
+GREEN) echo "$GREEN" ;;
+YELLOW) echo "$YELLOW" ;;
+BLUE) echo "$BLUE" ;;
+esac
+}
+
 msg() {
-    local color_code="" text="${*:2}"
-    # Convert to uppercase for variable lookup (compatible with Bash 3.2)
-    case "$1" in
-        RED|red) color_code="$RED" ;;
-        GREEN|green) color_code="$GREEN" ;;
-        YELLOW|yellow) color_code="$YELLOW" ;;
-        BLUE|blue) color_code="$BLUE" ;;
-        *) color_code="" ;;
-    esac
-    printf "%b[%s]%b %s\n" "$color_code" "$1" "$NC" "$text"
+    local color=$(get_color "$1") text="${*:2}"
+    printf "%b[%s]%b %s\n" "$color" "$1" "$NC" "$text"
 }
 err() {
     printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$*" >&2
 }
 
 # Cross-platform user info functions
-get_user_info() {
-    local user="$1" field="$2"
+get_user_home() {
+    local user="$1"
     if [[ "$PLATFORM" == "Darwin" ]]; then
-        local key; [[ "$field" == "home" ]] && key="NFSHomeDirectory" || key="UserShell"
-        dscl . -read "/Users/$user" "$key" 2>/dev/null | awk '{print $2}'
+        dscl . -read /Users/"$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}'
     else
-        local col; [[ "$field" == "home" ]] && col=6 || col=7
-        getent passwd "$user" 2>/dev/null | cut -d: -f"$col"
+        getent passwd "$user" 2>/dev/null | cut -d: -f6
     fi
 }
 
-# Cross-platform helpers
-get_file_owner() {
-    local file="$1"
-    if stat -c '%U' "$file" &>/dev/null; then
-        stat -c '%U' "$file"
+get_user_shell() {
+    local user="$1"
+    if [[ "$PLATFORM" == "Darwin" ]]; then
+        dscl . -read /Users/"$user" UserShell 2>/dev/null | awk '{print $2}'
     else
-        stat -f '%Su' "$file" 2>/dev/null
-    fi
-}
-
-validate_file_ownership() {
-    local file="$1"
-    local expected_owner="$2"
-    
-    local file_owner
-    file_owner=$(get_file_owner "$file")
-    
-    if [[ -z "$file_owner" ]]; then
-        err "Cannot determine owner of $file"
-        return 1
-    elif [[ "$file_owner" != "$expected_owner" ]]; then
-        err "Security: $file not owned by $expected_owner (owner: $file_owner)"
-        return 1
-    fi
-    
-    return 0
-}
-
-# Determine hash command once
-get_hash_command() {
-    if command -v sha256sum &>/dev/null; then
-        echo "sha256sum"
-    elif command -v shasum &>/dev/null; then
-        echo "shasum -a 256"
-    else
-        echo ""
-    fi
-}
-
-compute_hash() {
-    local file="$1"
-    local hash_cmd
-    hash_cmd=$(get_hash_command)
-    
-    if [[ -n "$hash_cmd" ]]; then
-        $hash_cmd "$file" 2>/dev/null | awk '{print $1}'
-    else
-        return 1
+        getent passwd "$user" 2>/dev/null | cut -d: -f7
     fi
 }
 
@@ -136,79 +93,82 @@ check_symlinks_status() {
     return 0
 }
 
-# Generic function to show completion messages
-show_completion_message() {
-    local type="$1"  # "phase1", "phase2", or "complete"
-    
-    msg GREEN ""
+# Show Phase 1 completion message
+show_phase1_message() {
     msg GREEN "=========================================="
-    case "$type" in
-        phase1)
-            msg GREEN "Phase 1 Complete!"
-            msg GREEN ""
-            msg GREEN "Next steps:"
-            msg GREEN " 1. Run: exec zsh -l"
-            msg GREEN " 2. Run: p10k configure"
-            msg GREEN " 3. Run this script again to complete setup"
-            msg GREEN ""
-            msg YELLOW "Note: Marker file ~/.phase1-marker created"
-            msg YELLOW "      (This tracks your setup progress)"
-            ;;
-        phase2)
-            msg GREEN "Phase 2 Complete!"
-            msg GREEN ""
-            msg GREEN "Root symlinks created successfully!"
-            msg GREEN "All dotfiles are now properly linked to /root/"
-            msg GREEN ""
-            msg GREEN "You're all set! Log out and back in."
-            ;;
-        complete)
-            msg GREEN "Installation Complete!"
-            msg GREEN ""
-            msg GREEN "Everything is configured and ready!"
-            msg GREEN ""
-            msg GREEN "Next steps:"
-            msg GREEN " 1. Log out and log back in"
-            msg GREEN " 2. Run: zsh"
-            msg GREEN ""
-            ;;
-    esac
+    msg GREEN "Phase 1 Complete!"
     msg GREEN "=========================================="
+    msg GREEN "Next steps:"
+    msg GREEN " 1. Run: exec zsh -l"
+    msg GREEN " 2. Run: p10k configure"
+    msg GREEN " 3. Run this script again to complete setup"
     msg GREEN ""
-    
+    msg YELLOW "Marker file created: ~/.phase1-marker"
     local last_backup
     last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
     [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
 }
 
-# Convenience functions for backward compatibility
-show_phase1_message() { show_completion_message "phase1"; }
-show_phase2_complete() { show_completion_message "phase2"; }
-show_complete_message() { show_completion_message "complete"; }
+# Show Phase 2 completion message
+show_phase2_complete() {
+    msg GREEN "=========================================="
+    msg GREEN "Phase 2 Complete!"
+    msg GREEN "=========================================="
+    msg GREEN "Root symlinks created successfully!"
+    msg GREEN "All dotfiles are now properly linked to /root/"
+}
+
+# Show normal completion message
+show_complete_message() {
+    msg GREEN "=========================================="
+    msg GREEN "Installation Complete!"
+    msg GREEN "=========================================="
+    msg GREEN "All done! Log out and back in, then run: zsh"
+    local last_backup
+    last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
+    [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
+}
 
 cleanup() {
     local c=$?; [[ $c -ne 0 ]] && err "Installation failed."
-    # Clean up all temporary files
-    if [[ -n "${TEMP_DIR:-}" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
-    fi
+    [[ -f "${TEMP_DIR:-}/.zshrc.tmp" ]] && rm -f "$TEMP_DIR/.zshrc.tmp"
     exit $c
 }
 trap cleanup EXIT
 
 check_sudo() {
-    if [[ $EUID -ne 0 ]]; then
-        err "This script must be run with sudo or as root (EUID=$EUID)"
-        exit 1
+if [[ $EUID -ne 0 ]]; then
+err "This script must be run with sudo or as root (EUID=$EUID)"
+exit 1
+fi
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        # Validate username format while preventing path traversal
+        # Rejects: .., /, . (hidden files), leading/trailing dots, path patterns
+        if [[ "$SUDO_USER" == *".."* ]]; then
+            err "SUDO_USER contains path traversal pattern: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ "$SUDO_USER" == */* ]]; then
+            err "SUDO_USER contains path separator: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ "$SUDO_USER" == .* ]]; then
+            err "SUDO_USER starts with a dot: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ "$SUDO_USER" == *. ]]; then
+            err "SUDO_USER ends with a dot: ${SUDO_USER}"
+            exit 1
+        fi
+        if [[ ! "$SUDO_USER" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            err "Invalid SUDO_USER format: ${SUDO_USER}"
+            exit 1
+        fi
+        if ! id "$SUDO_USER" &>/dev/null; then
+            err "Invalid SUDO_USER: user does not exist: ${SUDO_USER}"
+            exit 1
+        fi
     fi
-    [[ -z "${SUDO_USER:-}" ]] && return 0
-
-    # Validate username format while preventing path traversal
-    [[ "$SUDO_USER" == *".."* ]] && { err "SUDO_USER contains path traversal: ${SUDO_USER}"; exit 1; }
-    [[ "$SUDO_USER" == */* ]] && { err "SUDO_USER contains path separator: ${SUDO_USER}"; exit 1; }
-    [[ "$SUDO_USER" =~ ^\.|\. ]] && { err "SUDO_USER has leading/trailing dot: ${SUDO_USER}"; exit 1; }
-    [[ ! "$SUDO_USER" =~ ^[a-zA-Z0-9._-]+$ ]] && { err "Invalid SUDO_USER format: ${SUDO_USER}"; exit 1; }
-    ! id "$SUDO_USER" &>/dev/null && { err "User not found: ${SUDO_USER}"; exit 1; }
 }
 
 detect_os() {
@@ -229,7 +189,7 @@ detect_os() {
             ;;
         Darwin)
             OS="macos"; PKG_MGR="brew"
-            # brew check moved to after SUDO_USER validation in main()
+            command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
             ;;
         *) err "Unsupported OS"; exit 1 ;;
     esac
@@ -244,42 +204,36 @@ run_pkg() {
     # Build safe package list for brew
     local safe_pkgs=""
     if [[ ${#packages[@]} -gt 0 ]]; then
-        local invalid_pkgs=()
         for pkg in "${packages[@]}"; do
             # Validate package name: alphanumeric, hyphens, dots only
             if [[ "$pkg" =~ ^[a-zA-Z0-9._-]+$ ]]; then
                 safe_pkgs="${safe_pkgs}${safe_pkgs:+ }${pkg}"
             else
-                invalid_pkgs+=("$pkg")
+                err "Invalid package name: $pkg"
+                return 1
             fi
         done
-        
-        # Report all invalid packages at once
-        if [[ ${#invalid_pkgs[@]} -gt 0 ]]; then
-            for pkg in "${invalid_pkgs[@]}"; do
-                err "Invalid package name: $pkg"
-            done
-            return 1
-        fi
     fi
 
-    case "$PKG_MGR-$action" in
-        brew-update) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
-        brew-install) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
-        brew-cleanup) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
-        apt-update) apt-get update && apt-get upgrade -y ;;
-        apt-install) apt-get install -y "$@" ;;
-        apt-cleanup) apt-get autoremove -y && apt-get autoclean ;;
-        dnf-update|yum-update) "$PKG_MGR" update -y ;;
-        dnf-install|yum-install) "$PKG_MGR" install -y "$@" ;;
-        dnf-cleanup|yum-cleanup) "$PKG_MGR" autoremove -y ;;
-        pacman-update) pacman -Syu --noconfirm ;;
-        pacman-install) pacman -S --noconfirm "$@" ;;
-        pacman-cleanup) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null; pacman -Sc --noconfirm ;;
-        zypper-update) zypper update -y ;;
-        zypper-install) zypper install -y "$@" ;;
-        zypper-cleanup) zypper packages --unneeded | awk -F'|' 'NR>2 && $3 ~ /[^[:space:]]/ {print $3}' | xargs -r zypper remove -y 2>/dev/null; zypper clean ;;
-        *) err "Unsupported package manager action: $PKG_MGR-$action"; return 1 ;;
+    case "${action}_$PKG_MGR" in
+        update_brew) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
+        install_brew) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
+        cleanup_brew) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
+update_apt) apt-get update && apt-get upgrade -y ;;
+install_apt) apt-get install -y "$@" ;;
+cleanup_apt) apt-get autoremove -y && apt-get autoclean ;;
+update_dnf) dnf update -y ;;
+install_dnf) dnf install -y "$@" ;;
+cleanup_dnf) dnf autoremove -y ;;
+update_yum) yum update -y ;;
+install_yum) yum install -y "$@" ;;
+cleanup_yum) yum autoremove -y ;;
+update_pacman) pacman -Syu --noconfirm ;;
+install_pacman) pacman -S --noconfirm "$@" ;;
+cleanup_pacman) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null || true; pacman -Sc --noconfirm ;;
+update_zypper) zypper update -y ;;
+install_zypper) zypper install -y "$@" ;;
+cleanup_zypper) zypper packages --unneeded | grep "|" | grep -v "Name" | awk -F'|' '{print $3}' | xargs -r zypper remove -y 2>/dev/null || true; zypper clean ;;
     esac
 }
 
@@ -300,25 +254,9 @@ backup_dotfiles() {
     
     [[ ${#to_backup[@]} -eq 0 ]] && { msg GREEN "No dotfiles to backup"; rmdir "$dir" 2>/dev/null || true; return 0; }
     
-    # Change to directory first to avoid -C flag compatibility issues
-    (
-        cd "$REAL_HOME" || { err "Failed to change to home directory"; exit 1; }
-        tar -czf "$dir/dotfiles.tar.gz" "${to_backup[@]}" 2>/dev/null
-    ) && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
+    tar -czf "$dir/dotfiles.tar.gz" -C "$REAL_HOME" "${to_backup[@]}" 2>/dev/null && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
     set_ownership "$dir" -R || return 1
     msg GREEN "Backup complete: $dir"
-}
-
-# Download file using curl or wget
-download_file() {
-    local url="$1" output="$2"
-    if command -v curl &>/dev/null; then
-        curl -fsSL --max-time 30 --retry 3 "$url" -o "$output"
-    elif command -v wget &>/dev/null; then
-        wget -q --timeout=30 --tries=3 "$url" -O "$output"
-    else
-        return 1
-    fi
 }
 
 download_zshrc() {
@@ -330,8 +268,17 @@ download_zshrc() {
     local checksum_tmp="$TEMP_DIR/.zshrc.sha256.tmp"
     local target="$REAL_HOME/.zshrc"
 
-    download_file "$url" "$tmp" || { err "Failed to download .zshrc"; exit 1; }
-    download_file "$checksum_url" "$checksum_tmp" || { err "Failed to download checksum"; rm -f "$tmp"; exit 1; }
+    # Download .zshrc
+    local ok=0
+    command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$url" -o "$tmp" && ok=1
+    [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$url" -O "$tmp" && ok=1
+    [[ $ok -eq 0 ]] && { err "Failed to download .zshrc"; exit 1; }
+
+    # Download checksum file
+    ok=0
+    command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$checksum_url" -o "$checksum_tmp" && ok=1
+    [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$checksum_url" -O "$checksum_tmp" && ok=1
+    [[ $ok -eq 0 ]] && { err "Failed to download .zshrc.sha256"; rm -f "$tmp"; exit 1; }
 
     # Verify SHA256 checksum
     local expected_hash computed_hash
@@ -342,9 +289,12 @@ download_zshrc() {
     [[ "$expected_hash" =~ ^[a-fA-F0-9]{64}$ ]] || { err "Invalid hash format in checksum file"; rm -f "$tmp" "$checksum_tmp"; exit 1; }
 
     # Compute hash of downloaded file
-    computed_hash=$(compute_hash "$tmp")
-    if [[ $? -ne 0 || -z "$computed_hash" ]]; then
-        err "Failed to compute hash"
+    if command -v sha256sum &>/dev/null; then
+        computed_hash=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
+    elif command -v shasum &>/dev/null; then
+        computed_hash=$(shasum -a 256 "$tmp" 2>/dev/null | awk '{print $1}')
+    else
+        err "Neither sha256sum nor shasum found"
         rm -f "$tmp" "$checksum_tmp"
         exit 1
     fi
@@ -376,22 +326,15 @@ create_root_symlinks() {
     [[ "$OS" != "linux" ]] && { msg GREEN "Skipping root symlinks (not Linux)"; return 0; }
     [[ -z "${SUDO_USER:-}" ]] && { msg GREEN "Skipping root symlinks (not running as sudo)"; return 0; }
     [[ ! -d "/root" ]] && { msg GREEN "Skipping root symlinks (/root not found)"; return 0; }
+    # Prevent symlink loop if REAL_HOME is /root
     [[ "$REAL_HOME" == "/root" ]] && { msg GREEN "Skipping root symlinks (home is /root)"; return 0; }
-
-    # Check if all symlinks already exist
-    local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
-    local all_exist=1
-    for f in "${files[@]}"; do
-        [[ -L "/root/$f" ]] || { all_exist=0; break; }
-    done
-    [[ $all_exist -eq 1 ]] && { msg GREEN "Root symlinks already configured"; return 0; }
 
     msg GREEN "Creating symbolic links for root..."
 
+    local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
     local target
-    local -a created=()
-    local -a skipped=()
-    local -a not_found=()
+    local created_count=0
+    local missing_count=0
 
     for f in "${files[@]}"; do
         target="$REAL_HOME/$f"
@@ -399,28 +342,28 @@ create_root_symlinks() {
         # Security: Verify target is within REAL_HOME (prevent traversal)
         [[ "$target" != "$REAL_HOME"/* ]] && { err "Security: Target $target outside home directory"; continue; }
 
-        # Only symlink existing regular files
+        # Only symlink existing regular files (skip if missing or not a regular file)
+        # This prevents TOCTOU - we don't create files, only symlink existing ones
         if [[ -f "$target" ]]; then
-            # Verify file is owned by SUDO_USER
-            if ! validate_file_ownership "$target" "$SUDO_USER"; then
-                skipped+=("$f")
+            # Verify file is owned by SUDO_USER (prevent symlink to attacker-controlled file)
+            local file_owner
+            file_owner=$(stat -c '%U' "$target" 2>/dev/null) || file_owner=$(stat -f '%Su' "$target" 2>/dev/null)
+            if [[ "$file_owner" != "$SUDO_USER" ]]; then
+                err "Security: $target not owned by $SUDO_USER (owner: $file_owner)"
                 continue
             fi
 
-            # Create symlink
-            ln -sf "$target" "/root/$f" && created+=("$f")
+            # Create symlink atomically
+            ln -sf "$target" "/root/$f" && ((created_count++))
         else
-            not_found+=("$f")
+            ((missing_count++))
         fi
     done
 
-    # Report results
-    [[ ${#created[@]} -gt 0 ]] && msg GREEN "Created: ${created[*]}"
-    [[ ${#skipped[@]} -gt 0 ]] && msg YELLOW "Skipped (ownership): ${skipped[*]}"
-    [[ ${#not_found[@]} -gt 0 ]] && msg YELLOW "Not found: ${not_found[*]}"
+    [[ $created_count -gt 0 ]] && msg GREEN "Created $created_count symbolic link(s) in /root"
 
     # Return 1 if files are missing (need Phase 2)
-    [[ ${#not_found[@]} -gt 0 ]] && return 1
+    [[ $missing_count -gt 0 ]] && return 1
     return 0
 }
 
@@ -432,22 +375,28 @@ change_shell() {
     [[ ! -x "$zsh_path" ]] && { err "zsh not executable"; exit 1; }
     
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
-        if [[ "$zsh_path" =~ ^/[a-zA-Z0-9/_-]+/zsh$ && -x "$zsh_path" ]]; then
-            echo "$zsh_path" >> /etc/shells
-            msg GREEN "Added $zsh_path to /etc/shells"
+        if [[ "$zsh_path" =~ ^/[^[:space:]]+/zsh$ ]]; then
+            # Verify the path actually exists and is a regular executable file
+            if [[ -f "$zsh_path" && -x "$zsh_path" ]]; then
+                echo "$zsh_path" >> /etc/shells
+                msg GREEN "Added $zsh_path to /etc/shells"
+            else
+                err "zsh path does not exist or is not executable: $zsh_path"
+                exit 1
+            fi
         else
-            err "Invalid zsh path: $zsh_path"
+            err "Invalid zsh path format: $zsh_path"
             exit 1
         fi
     fi
     
-    local u_shell=$(get_user_info "$REAL_USER" shell)
+    local u_shell=$(get_user_shell "$REAL_USER")
     [[ "$u_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" "$REAL_USER"; msg GREEN "Changed shell for $REAL_USER"; } || msg GREEN "Shell already set for $REAL_USER"
 
     if [[ "$OS" == "macos" ]]; then
         msg GREEN "Skipping root shell change (not needed on macOS)"
     else
-        local r_shell=$(get_user_info "root" shell)
+        local r_shell=$(get_user_shell "root")
         [[ "$r_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" root; msg GREEN "Changed shell for root"; } || msg GREEN "Shell already set for root"
     fi
 }
@@ -469,30 +418,14 @@ main() {
     trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
 
     readonly REAL_USER="${SUDO_USER:-$(whoami)}"
-    readonly REAL_HOME=$(get_user_info "$REAL_USER" home)
-    if [[ -z "$REAL_HOME" ]]; then
-        err "Cannot determine home directory for user: $REAL_USER"
-        exit 1
-    elif [[ ! -d "$REAL_HOME" ]]; then
-        err "Home directory does not exist: $REAL_HOME"
-        exit 1
-    elif [[ ! -r "$REAL_HOME" ]]; then
-        err "Home directory is not readable: $REAL_HOME"
-        exit 1
-    elif [[ ! -w "$REAL_HOME" ]]; then
-        err "Home directory is not writable: $REAL_HOME"
-        exit 1
-    fi
+    readonly REAL_HOME=$(get_user_home "$REAL_USER")
+    [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
 
     # PHASE 2: Marker file exists - check if we need to complete setup
     if [[ -f "$REAL_HOME/.phase1-marker" ]]; then
         msg GREEN "Resuming Phase 2: Checking root symlinks..."
 
         check_sudo
-        # Check for brew after SUDO_USER validation
-        if [[ "$OS" == "macos" ]]; then
-            command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
-        fi
         detect_os
 
         check_symlinks_status
@@ -502,13 +435,10 @@ main() {
             0)
                 # All complete - remove marker and finish
                 rm -f "$REAL_HOME/.phase1-marker"
-                msg GREEN ""
                 msg GREEN "=========================================="
-                msg GREEN "Setup Already Complete!"
+                msg GREEN "Setup already complete!"
                 msg GREEN "=========================================="
-                msg GREEN ""
                 msg GREEN "All root symlinks are properly configured."
-                msg GREEN "(Marker file removed)"
                 ;;
             1)
                 # Files still missing
@@ -522,8 +452,8 @@ main() {
                 # Files exist but symlinks needed
                 msg GREEN "Creating missing symlinks..."
                 create_root_symlinks
-                local symlink_result=$?
-                if [[ $symlink_result -eq 0 ]]; then
+                check_symlinks_status
+                if [[ $? -eq 0 ]]; then
                     rm -f "$REAL_HOME/.phase1-marker"
                     show_phase2_complete
                 else
@@ -539,27 +469,26 @@ main() {
 
     check_sudo
     detect_os
-    # Check for brew after SUDO_USER validation and OS detection
-    if [[ "$OS" == "macos" ]]; then
-        command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
-    fi
     update_packages
     install_packages
     backup_dotfiles
     download_zshrc
     create_root_symlinks
-    local install_status=$?
+    local symlink_status=$?
     change_shell
     verify_installation
     cleanup_packages
 
-    # Determine completion status
-    case $install_status in
+    # Determine if Phase 2 is needed
+    check_symlinks_status
+    local final_status=$?
+
+    case $final_status in
         0)
             # All complete
             show_complete_message
             ;;
-        1)
+        1|2)
             # Need Phase 2
             touch "$REAL_HOME/.phase1-marker"
             chown "$REAL_USER:$(id -gn "$REAL_USER" 2>/dev/null)" "$REAL_HOME/.phase1-marker" 2>/dev/null || true
