@@ -51,6 +51,26 @@ get_user_shell() {
     fi
 }
 
+# Set ownership to SUDO_USER if running under sudo
+set_ownership() {
+    local target="$1"
+    local recursive="${2:-}"
+
+    [[ -z "${SUDO_USER:-}" ]] && return 0
+
+    local user_group
+    user_group=$(id -gn "$SUDO_USER" 2>/dev/null) || {
+        err "Failed to get group for $SUDO_USER"
+        return 1
+    }
+
+    if [[ "$recursive" == "-R" ]]; then
+        chown -R "${SUDO_USER}:${user_group}" "$target"
+    else
+        chown "${SUDO_USER}:${user_group}" "$target"
+    fi
+}
+
 cleanup() {
     local c=$?; [[ $c -ne 0 ]] && err "Installation failed. Check log: $LOG_FILE"
     [[ -f "${TEMP_DIR:-}/.zshrc.tmp" ]] && rm -f "$TEMP_DIR/.zshrc.tmp"
@@ -216,11 +236,7 @@ backup_dotfiles() {
     [[ ${#to_backup[@]} -eq 0 ]] && { msg GREEN "No dotfiles to backup"; rmdir "$dir" 2>/dev/null || true; return 0; }
     
     tar -czf "$dir/dotfiles.tar.gz" -C "$REAL_HOME" "${to_backup[@]}" 2>/dev/null && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        local user_group
-        user_group=$(id -gn "$SUDO_USER" 2>/dev/null) || { err "Failed to get group for $SUDO_USER"; return 1; }
-        chown -R "${SUDO_USER}:${user_group}" "$dir"
-    fi
+    set_ownership "$dir" -R || return 1
     msg GREEN "Backup complete: $dir"
 }
 
@@ -284,11 +300,7 @@ download_zshrc() {
     mv -f "$tmp" "$target" || { err "Failed to install .zshrc"; exit 1; }
     rm -f "$checksum_tmp"
     chmod 644 "$target"
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        local user_group
-        user_group=$(id -gn "$SUDO_USER" 2>/dev/null) || { err "Failed to get group for $SUDO_USER"; exit 1; }
-        chown "${SUDO_USER}:${user_group}" "$target"
-    fi
+    set_ownership "$target" || exit 1
     msg GREEN "Successfully installed .zshrc"
 }
 
