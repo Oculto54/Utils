@@ -95,15 +95,18 @@ check_symlinks_status() {
 
 # Show Phase 1 completion message
 show_phase1_message() {
+    msg GREEN ""
     msg GREEN "=========================================="
     msg GREEN "Phase 1 Complete!"
     msg GREEN "=========================================="
+    msg GREEN ""
     msg GREEN "Next steps:"
     msg GREEN " 1. Run: exec zsh -l"
     msg GREEN " 2. Run: p10k configure"
     msg GREEN " 3. Run this script again to complete setup"
     msg GREEN ""
-    msg YELLOW "Marker file created: ~/.phase1-marker"
+    msg YELLOW "Note: Marker file ~/.phase1-marker created"
+    msg YELLOW "      (This tracks your setup progress)"
     local last_backup
     last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
     [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
@@ -111,19 +114,30 @@ show_phase1_message() {
 
 # Show Phase 2 completion message
 show_phase2_complete() {
+    msg GREEN ""
     msg GREEN "=========================================="
     msg GREEN "Phase 2 Complete!"
     msg GREEN "=========================================="
+    msg GREEN ""
     msg GREEN "Root symlinks created successfully!"
     msg GREEN "All dotfiles are now properly linked to /root/"
+    msg GREEN ""
+    msg GREEN "You're all set! Log out and back in."
 }
 
 # Show normal completion message
 show_complete_message() {
+    msg GREEN ""
     msg GREEN "=========================================="
     msg GREEN "Installation Complete!"
     msg GREEN "=========================================="
-    msg GREEN "All done! Log out and back in, then run: zsh"
+    msg GREEN ""
+    msg GREEN "Everything is configured and ready!"
+    msg GREEN ""
+    msg GREEN "Next steps:"
+    msg GREEN " 1. Log out and log back in"
+    msg GREEN " 2. Run: zsh"
+    msg GREEN ""
     local last_backup
     last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
     [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
@@ -326,15 +340,22 @@ create_root_symlinks() {
     [[ "$OS" != "linux" ]] && { msg GREEN "Skipping root symlinks (not Linux)"; return 0; }
     [[ -z "${SUDO_USER:-}" ]] && { msg GREEN "Skipping root symlinks (not running as sudo)"; return 0; }
     [[ ! -d "/root" ]] && { msg GREEN "Skipping root symlinks (/root not found)"; return 0; }
-    # Prevent symlink loop if REAL_HOME is /root
     [[ "$REAL_HOME" == "/root" ]] && { msg GREEN "Skipping root symlinks (home is /root)"; return 0; }
+
+    # Check if all symlinks already exist
+    local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
+    local all_exist=1
+    for f in "${files[@]}"; do
+        [[ -L "/root/$f" ]] || { all_exist=0; break; }
+    done
+    [[ $all_exist -eq 1 ]] && { msg GREEN "Root symlinks already configured"; return 0; }
 
     msg GREEN "Creating symbolic links for root..."
 
-    local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
     local target
-    local created_count=0
-    local missing_count=0
+    local -a created=()
+    local -a skipped=()
+    local -a not_found=()
 
     for f in "${files[@]}"; do
         target="$REAL_HOME/$f"
@@ -342,28 +363,31 @@ create_root_symlinks() {
         # Security: Verify target is within REAL_HOME (prevent traversal)
         [[ "$target" != "$REAL_HOME"/* ]] && { err "Security: Target $target outside home directory"; continue; }
 
-        # Only symlink existing regular files (skip if missing or not a regular file)
-        # This prevents TOCTOU - we don't create files, only symlink existing ones
+        # Only symlink existing regular files
         if [[ -f "$target" ]]; then
-            # Verify file is owned by SUDO_USER (prevent symlink to attacker-controlled file)
+            # Verify file is owned by SUDO_USER
             local file_owner
             file_owner=$(stat -c '%U' "$target" 2>/dev/null) || file_owner=$(stat -f '%Su' "$target" 2>/dev/null)
             if [[ "$file_owner" != "$SUDO_USER" ]]; then
                 err "Security: $target not owned by $SUDO_USER (owner: $file_owner)"
+                skipped+=("$f")
                 continue
             fi
 
-            # Create symlink atomically
-            ln -sf "$target" "/root/$f" && ((created_count++))
+            # Create symlink
+            ln -sf "$target" "/root/$f" && created+=("$f")
         else
-            ((missing_count++))
+            not_found+=("$f")
         fi
     done
 
-    [[ $created_count -gt 0 ]] && msg GREEN "Created $created_count symbolic link(s) in /root"
+    # Report results
+    [[ ${#created[@]} -gt 0 ]] && msg GREEN "Created: ${created[*]}"
+    [[ ${#skipped[@]} -gt 0 ]] && msg YELLOW "Skipped (ownership): ${skipped[*]}"
+    [[ ${#not_found[@]} -gt 0 ]] && msg YELLOW "Not found: ${not_found[*]}"
 
     # Return 1 if files are missing (need Phase 2)
-    [[ $missing_count -gt 0 ]] && return 1
+    [[ ${#not_found[@]} -gt 0 ]] && return 1
     return 0
 }
 
@@ -435,10 +459,13 @@ main() {
             0)
                 # All complete - remove marker and finish
                 rm -f "$REAL_HOME/.phase1-marker"
+                msg GREEN ""
                 msg GREEN "=========================================="
-                msg GREEN "Setup already complete!"
+                msg GREEN "Setup Already Complete!"
                 msg GREEN "=========================================="
+                msg GREEN ""
                 msg GREEN "All root symlinks are properly configured."
+                msg GREEN "(Marker file removed)"
                 ;;
             1)
                 # Files still missing
@@ -452,8 +479,8 @@ main() {
                 # Files exist but symlinks needed
                 msg GREEN "Creating missing symlinks..."
                 create_root_symlinks
-                check_symlinks_status
-                if [[ $? -eq 0 ]]; then
+                local symlink_result=$?
+                if [[ $symlink_result -eq 0 ]]; then
                     rm -f "$REAL_HOME/.phase1-marker"
                     show_phase2_complete
                 else
@@ -474,21 +501,18 @@ main() {
     backup_dotfiles
     download_zshrc
     create_root_symlinks
-    local symlink_status=$?
+    local install_status=$?
     change_shell
     verify_installation
     cleanup_packages
 
-    # Determine if Phase 2 is needed
-    check_symlinks_status
-    local final_status=$?
-
-    case $final_status in
+    # Determine completion status
+    case $install_status in
         0)
             # All complete
             show_complete_message
             ;;
-        1|2)
+        1)
             # Need Phase 2
             touch "$REAL_HOME/.phase1-marker"
             chown "$REAL_USER:$(id -gn "$REAL_USER" 2>/dev/null)" "$REAL_HOME/.phase1-marker" 2>/dev/null || true
