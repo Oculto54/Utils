@@ -130,7 +130,10 @@ show_complete_message() {
 
 cleanup() {
     local c=$?; [[ $c -ne 0 ]] && err "Installation failed."
-    [[ -f "${TEMP_DIR:-}/.zshrc.tmp" ]] && rm -f "$TEMP_DIR/.zshrc.tmp"
+    # Clean up all temporary files
+    if [[ -n "${TEMP_DIR:-}" && -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+    fi
     exit $c
 }
 trap cleanup EXIT
@@ -183,15 +186,23 @@ run_pkg() {
     # Build safe package list for brew
     local safe_pkgs=""
     if [[ ${#packages[@]} -gt 0 ]]; then
+        local invalid_pkgs=()
         for pkg in "${packages[@]}"; do
             # Validate package name: alphanumeric, hyphens, dots only
             if [[ "$pkg" =~ ^[a-zA-Z0-9._-]+$ ]]; then
                 safe_pkgs="${safe_pkgs}${safe_pkgs:+ }${pkg}"
             else
-                err "Invalid package name: $pkg"
-                return 1
+                invalid_pkgs+=("$pkg")
             fi
         done
+        
+        # Report all invalid packages at once
+        if [[ ${#invalid_pkgs[@]} -gt 0 ]]; then
+            for pkg in "${invalid_pkgs[@]}"; do
+                err "Invalid package name: $pkg"
+            done
+            return 1
+        fi
     fi
 
     case "$PKG_MGR" in
@@ -254,12 +265,12 @@ backup_dotfiles() {
 download_file() {
     local url="$1" output="$2"
     if command -v curl &>/dev/null; then
-        curl -fsSL --max-time 30 --retry 3 "$url" -o "$output" 2>/dev/null && return 0
+        curl -fsSL --max-time 30 --retry 3 "$url" -o "$output"
+    elif command -v wget &>/dev/null; then
+        wget -q --timeout=30 --tries=3 "$url" -O "$output"
+    else
+        return 1
     fi
-    if command -v wget &>/dev/null; then
-        wget -q --timeout=30 --tries=3 "$url" -O "$output" 2>/dev/null && return 0
-    fi
-    return 1
 }
 
 download_zshrc() {
@@ -417,7 +428,19 @@ main() {
 
     readonly REAL_USER="${SUDO_USER:-$(whoami)}"
     readonly REAL_HOME=$(get_user_info "$REAL_USER" home)
-    [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
+    if [[ -z "$REAL_HOME" ]]; then
+        err "Cannot determine home directory for user: $REAL_USER"
+        exit 1
+    elif [[ ! -d "$REAL_HOME" ]]; then
+        err "Home directory does not exist: $REAL_HOME"
+        exit 1
+    elif [[ ! -r "$REAL_HOME" ]]; then
+        err "Home directory is not readable: $REAL_HOME"
+        exit 1
+    elif [[ ! -w "$REAL_HOME" ]]; then
+        err "Home directory is not writable: $REAL_HOME"
+        exit 1
+    fi
 
     # PHASE 2: Marker file exists - check if we need to complete setup
     if [[ -f "$REAL_HOME/.phase1-marker" ]]; then
