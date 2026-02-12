@@ -5,12 +5,11 @@ set -euo pipefail
 readonly SCRIPT_DIR="${BASH_SOURCE[0]:+$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [[ -n "${BASH_SOURCE[0]:-}" ]] && readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")" || readonly SCRIPT_NAME="install.sh"
 readonly SCRIPT_VERSION="1.0.0"
-readonly LOG_FILE=$(mktemp -t install.log.XXXXXX)
 readonly PLATFORM=$(uname -s)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
-log_msg() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"; }
+log_msg() { :; }
 
 debug() { [[ "${DEBUG:-0}" == "1" ]] && echo "[DEBUG] $*" >&2; }
 
@@ -23,14 +22,12 @@ BLUE) echo "$BLUE" ;;
 esac
 }
 
-msg() { 
-local color=$(get_color "$1") text="${*:2}"
-printf "%b[%s]%b %s\n" "$color" "$1" "$NC" "$text"
-log_msg "[$1] $text"
+msg() {
+    local color=$(get_color "$1") text="${*:2}"
+    printf "%b[%s]%b %s\n" "$color" "$1" "$NC" "$text"
 }
-err() { 
-printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$*" >&2
-log_msg "[ERROR] $*"
+err() {
+    printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$*" >&2
 }
 
 # Cross-platform user info functions
@@ -72,8 +69,79 @@ set_ownership() {
     fi
 }
 
+# Check which symlinks need to be created
+check_symlinks_status() {
+    local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
+    local missing=0
+    local symlink_needed=0
+
+    for f in "${files[@]}"; do
+        local target="$REAL_HOME/$f"
+        local symlink="/root/$f"
+
+        # Check if target file exists
+        if [[ ! -f "$target" ]]; then
+            ((missing++))
+            continue
+        fi
+
+        # Check if symlink needs to be created
+        if [[ ! -L "$symlink" ]]; then
+            ((symlink_needed++))
+        fi
+    done
+
+    # Return codes:
+    # 0 = all complete (no missing files, no symlinks needed)
+    # 1 = missing files (need Phase 2)
+    # 2 = files exist but symlinks needed
+    [[ $missing -gt 0 ]] && return 1
+    [[ $symlink_needed -gt 0 ]] && return 2
+    return 0
+}
+
+# Show Phase 1 completion message
+show_phase1_message() {
+    msg GREEN "=========================================="
+    msg GREEN "Phase 1 Complete!"
+    msg GREEN "=========================================="
+    msg GREEN "Next steps:"
+    msg GREEN " 1. Run: exec zsh -l"
+    msg GREEN " 2. Run: p10k configure"
+    msg GREEN " 3. Run this script again to complete setup"
+    msg GREEN ""
+    msg YELLOW "Marker file created: ~/.phase1-marker"
+    if [[ "${NO_BACKUP:-0}" != "1" ]]; then
+        local last_backup
+        last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
+        [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
+    fi
+}
+
+# Show Phase 2 completion message
+show_phase2_complete() {
+    msg GREEN "=========================================="
+    msg GREEN "Phase 2 Complete!"
+    msg GREEN "=========================================="
+    msg GREEN "Root symlinks created successfully!"
+    msg GREEN "All dotfiles are now properly linked to /root/"
+}
+
+# Show normal completion message
+show_complete_message() {
+    msg GREEN "=========================================="
+    msg GREEN "Installation Complete!"
+    msg GREEN "=========================================="
+    msg GREEN "All done! Log out and back in, then run: zsh"
+    if [[ "${NO_BACKUP:-0}" != "1" ]]; then
+        local last_backup
+        last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
+        [[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
+    fi
+}
+
 cleanup() {
-    local c=$?; [[ $c -ne 0 ]] && err "Installation failed. Check log: $LOG_FILE"
+    local c=$?; [[ $c -ne 0 ]] && err "Installation failed."
     [[ -f "${TEMP_DIR:-}/.zshrc.tmp" ]] && rm -f "$TEMP_DIR/.zshrc.tmp"
     exit $c
 }
@@ -317,7 +385,9 @@ create_root_symlinks() {
     [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would create symlinks in /root"; return 0; }
 
     local -a files=(".zshrc" ".p10k.zsh" ".nanorc")
-    local target created_count=0
+    local target
+    local created_count=0
+    local missing_count=0
 
     for f in "${files[@]}"; do
         target="$REAL_HOME/$f"
@@ -338,10 +408,16 @@ create_root_symlinks() {
 
             # Create symlink atomically
             ln -sf "$target" "/root/$f" && ((created_count++))
+        else
+            ((missing_count++))
         fi
     done
 
     [[ $created_count -gt 0 ]] && msg GREEN "Created $created_count symbolic link(s) in /root"
+
+    # Return 1 if files are missing (need Phase 2)
+    [[ $missing_count -gt 0 ]] && return 1
+    return 0
 }
 
 change_shell() {
@@ -393,38 +469,89 @@ verify_installation() {
 cleanup_packages() { msg GREEN "Cleaning up unnecessary packages..."; run_pkg cleanup; }
 
 main() {
-readonly TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
+    readonly TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
 
-parse_args "$@"
+    parse_args "$@"
 
-readonly REAL_USER="${SUDO_USER:-$(whoami)}"
+    readonly REAL_USER="${SUDO_USER:-$(whoami)}"
     readonly REAL_HOME=$(get_user_home "$REAL_USER")
     [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
 
+    # PHASE 2: Marker file exists - check if we need to complete setup
+    if [[ -f "$REAL_HOME/.phase1-marker" ]]; then
+        msg GREEN "Resuming Phase 2: Checking root symlinks..."
+
+        check_sudo
+        detect_os
+
+        check_symlinks_status
+        local status=$?
+
+        case $status in
+            0)
+                # All complete - remove marker and finish
+                rm -f "$REAL_HOME/.phase1-marker"
+                msg GREEN "=========================================="
+                msg GREEN "Setup already complete!"
+                msg GREEN "=========================================="
+                msg GREEN "All root symlinks are properly configured."
+                ;;
+            1)
+                # Files still missing
+                msg YELLOW "Some dotfiles still missing:"
+                [[ ! -f "$REAL_HOME/.p10k.zsh" ]] && msg YELLOW " - .p10k.zsh (run: p10k configure)"
+                [[ ! -f "$REAL_HOME/.nanorc" ]] && msg YELLOW " - .nanorc (create manually if needed)"
+                msg GREEN ""
+                msg GREEN "Run these commands, then run this script again."
+                ;;
+            2)
+                # Files exist but symlinks needed
+                msg GREEN "Creating missing symlinks..."
+                create_root_symlinks
+                check_symlinks_status
+                if [[ $? -eq 0 ]]; then
+                    rm -f "$REAL_HOME/.phase1-marker"
+                    show_phase2_complete
+                else
+                    msg YELLOW "Some symlinks could not be created. Check permissions."
+                fi
+                ;;
+        esac
+        exit 0
+    fi
+
+    # PHASE 1: Normal installation
     msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
 
     check_sudo
     detect_os
-update_packages
-install_packages
-backup_dotfiles
-download_zshrc
-create_root_symlinks
-change_shell
-verify_installation
-cleanup_packages
+    update_packages
+    install_packages
+    backup_dotfiles
+    download_zshrc
+    create_root_symlinks
+    local symlink_status=$?
+    change_shell
+    verify_installation
+    cleanup_packages
 
-msg GREEN "=========================================="
-msg GREEN "Installation complete!"
-msg GREEN "=========================================="
-msg GREEN "Log saved to: $LOG_FILE"
-msg GREEN "Next steps: 1. Log out and back in 2. Run 'zsh'"
-if [[ "${NO_BACKUP:-0}" != "1" ]]; then
-local last_backup
-last_backup=$(ls -d "$REAL_HOME/.dotfiles_backup_"* 2>/dev/null | tail -1)
-[[ -n "$last_backup" ]] && msg GREEN "Backup: $last_backup"
-fi
+    # Determine if Phase 2 is needed
+    check_symlinks_status
+    local final_status=$?
+
+    case $final_status in
+        0)
+            # All complete
+            show_complete_message
+            ;;
+        1|2)
+            # Need Phase 2
+            touch "$REAL_HOME/.phase1-marker"
+            chown "$REAL_USER:$(id -gn "$REAL_USER" 2>/dev/null)" "$REAL_HOME/.phase1-marker" 2>/dev/null || true
+            show_phase1_message
+            ;;
+    esac
 }
 
 main "$@"
