@@ -6,17 +6,9 @@ readonly PLATFORM=$(uname -s)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
-get_color() {
-case "$1" in
-RED) echo "$RED" ;;
-GREEN) echo "$GREEN" ;;
-YELLOW) echo "$YELLOW" ;;
-BLUE) echo "$BLUE" ;;
-esac
-}
-
 msg() {
-    local color=$(get_color "$1") text="${*:2}"
+    local color_name="${1^^}" text="${*:2}"
+    local color="${!color_name:-}"
     printf "%b[%s]%b %s\n" "$color" "$1" "$NC" "$text"
 }
 err() {
@@ -24,21 +16,14 @@ err() {
 }
 
 # Cross-platform user info functions
-get_user_home() {
-    local user="$1"
+get_user_info() {
+    local user="$1" field="$2"
     if [[ "$PLATFORM" == "Darwin" ]]; then
-        dscl . -read /Users/"$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}'
+        local key; [[ "$field" == "home" ]] && key="NFSHomeDirectory" || key="UserShell"
+        dscl . -read "/Users/$user" "$key" 2>/dev/null | awk '{print $2}'
     else
-        getent passwd "$user" 2>/dev/null | cut -d: -f6
-    fi
-}
-
-get_user_shell() {
-    local user="$1"
-    if [[ "$PLATFORM" == "Darwin" ]]; then
-        dscl . -read /Users/"$user" UserShell 2>/dev/null | awk '{print $2}'
-    else
-        getent passwd "$user" 2>/dev/null | cut -d: -f7
+        local col; [[ "$field" == "home" ]] && col=6 || col=7
+        getent passwd "$user" 2>/dev/null | cut -d: -f"$col"
     fi
 }
 
@@ -151,38 +136,18 @@ cleanup() {
 trap cleanup EXIT
 
 check_sudo() {
-if [[ $EUID -ne 0 ]]; then
-err "This script must be run with sudo or as root (EUID=$EUID)"
-exit 1
-fi
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        # Validate username format while preventing path traversal
-        # Rejects: .., /, . (hidden files), leading/trailing dots, path patterns
-        if [[ "$SUDO_USER" == *".."* ]]; then
-            err "SUDO_USER contains path traversal pattern: ${SUDO_USER}"
-            exit 1
-        fi
-        if [[ "$SUDO_USER" == */* ]]; then
-            err "SUDO_USER contains path separator: ${SUDO_USER}"
-            exit 1
-        fi
-        if [[ "$SUDO_USER" == .* ]]; then
-            err "SUDO_USER starts with a dot: ${SUDO_USER}"
-            exit 1
-        fi
-        if [[ "$SUDO_USER" == *. ]]; then
-            err "SUDO_USER ends with a dot: ${SUDO_USER}"
-            exit 1
-        fi
-        if [[ ! "$SUDO_USER" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            err "Invalid SUDO_USER format: ${SUDO_USER}"
-            exit 1
-        fi
-        if ! id "$SUDO_USER" &>/dev/null; then
-            err "Invalid SUDO_USER: user does not exist: ${SUDO_USER}"
-            exit 1
-        fi
+    if [[ $EUID -ne 0 ]]; then
+        err "This script must be run with sudo or as root (EUID=$EUID)"
+        exit 1
     fi
+    [[ -z "${SUDO_USER:-}" ]] && return 0
+
+    # Validate username format while preventing path traversal
+    [[ "$SUDO_USER" == *".."* ]] && { err "SUDO_USER contains path traversal: ${SUDO_USER}"; exit 1; }
+    [[ "$SUDO_USER" == */* ]] && { err "SUDO_USER contains path separator: ${SUDO_USER}"; exit 1; }
+    [[ "$SUDO_USER" =~ ^\.|\. ]] && { err "SUDO_USER has leading/trailing dot: ${SUDO_USER}"; exit 1; }
+    [[ ! "$SUDO_USER" =~ ^[a-zA-Z0-9._-]+$ ]] && { err "Invalid SUDO_USER format: ${SUDO_USER}"; exit 1; }
+    ! id "$SUDO_USER" &>/dev/null && { err "User not found: ${SUDO_USER}"; exit 1; }
 }
 
 detect_os() {
@@ -229,25 +194,37 @@ run_pkg() {
         done
     fi
 
-    case "${action}_$PKG_MGR" in
-        update_brew) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
-        install_brew) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
-        cleanup_brew) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
-update_apt) apt-get update && apt-get upgrade -y ;;
-install_apt) apt-get install -y "$@" ;;
-cleanup_apt) apt-get autoremove -y && apt-get autoclean ;;
-update_dnf) dnf update -y ;;
-install_dnf) dnf install -y "$@" ;;
-cleanup_dnf) dnf autoremove -y ;;
-update_yum) yum update -y ;;
-install_yum) yum install -y "$@" ;;
-cleanup_yum) yum autoremove -y ;;
-update_pacman) pacman -Syu --noconfirm ;;
-install_pacman) pacman -S --noconfirm "$@" ;;
-cleanup_pacman) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null || true; pacman -Sc --noconfirm ;;
-update_zypper) zypper update -y ;;
-install_zypper) zypper install -y "$@" ;;
-cleanup_zypper) zypper packages --unneeded | grep "|" | grep -v "Name" | awk -F'|' '{print $3}' | xargs -r zypper remove -y 2>/dev/null || true; zypper clean ;;
+    case "$PKG_MGR" in
+        brew)
+            case "$action" in
+                update) su - "$SUDO_USER" -c 'brew update && brew upgrade' ;;
+                install) su - "$SUDO_USER" -c "brew install --quiet ${safe_pkgs}" ;;
+                cleanup) su - "$SUDO_USER" -c 'brew cleanup --prune=all && brew autoremove' ;;
+            esac ;;
+        apt)
+            case "$action" in
+                update) apt-get update && apt-get upgrade -y ;;
+                install) apt-get install -y "$@" ;;
+                cleanup) apt-get autoremove -y && apt-get autoclean ;;
+            esac ;;
+        dnf|yum)
+            case "$action" in
+                update) "$PKG_MGR" update -y ;;
+                install) "$PKG_MGR" install -y "$@" ;;
+                cleanup) "$PKG_MGR" autoremove -y ;;
+            esac ;;
+        pacman)
+            case "$action" in
+                update) pacman -Syu --noconfirm ;;
+                install) pacman -S --noconfirm "$@" ;;
+                cleanup) pacman -Qdtq 2>/dev/null | pacman -Rns --noconfirm - 2>/dev/null; pacman -Sc --noconfirm ;;
+            esac ;;
+        zypper)
+            case "$action" in
+                update) zypper update -y ;;
+                install) zypper install -y "$@" ;;
+                cleanup) zypper packages --unneeded | awk -F'|' 'NR>2 && $3 ~ /[^[:space:]]/ {print $3}' | xargs -r zypper remove -y 2>/dev/null; zypper clean ;;
+            esac ;;
     esac
 }
 
@@ -273,6 +250,18 @@ backup_dotfiles() {
     msg GREEN "Backup complete: $dir"
 }
 
+# Download file using curl or wget
+download_file() {
+    local url="$1" output="$2"
+    if command -v curl &>/dev/null; then
+        curl -fsSL --max-time 30 --retry 3 "$url" -o "$output" 2>/dev/null && return 0
+    fi
+    if command -v wget &>/dev/null; then
+        wget -q --timeout=30 --tries=3 "$url" -O "$output" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
 download_zshrc() {
     msg GREEN "Downloading .zshrc configuration..."
     local base_url="https://raw.githubusercontent.com/Oculto54/Utils/main"
@@ -282,17 +271,8 @@ download_zshrc() {
     local checksum_tmp="$TEMP_DIR/.zshrc.sha256.tmp"
     local target="$REAL_HOME/.zshrc"
 
-    # Download .zshrc
-    local ok=0
-    command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$url" -o "$tmp" && ok=1
-    [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$url" -O "$tmp" && ok=1
-    [[ $ok -eq 0 ]] && { err "Failed to download .zshrc"; exit 1; }
-
-    # Download checksum file
-    ok=0
-    command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$checksum_url" -o "$checksum_tmp" && ok=1
-    [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$checksum_url" -O "$checksum_tmp" && ok=1
-    [[ $ok -eq 0 ]] && { err "Failed to download .zshrc.sha256"; rm -f "$tmp"; exit 1; }
+    download_file "$url" "$tmp" || { err "Failed to download .zshrc"; exit 1; }
+    download_file "$checksum_url" "$checksum_tmp" || { err "Failed to download checksum"; rm -f "$tmp"; exit 1; }
 
     # Verify SHA256 checksum
     local expected_hash computed_hash
@@ -399,28 +379,22 @@ change_shell() {
     [[ ! -x "$zsh_path" ]] && { err "zsh not executable"; exit 1; }
     
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
-        if [[ "$zsh_path" =~ ^/[^[:space:]]+/zsh$ ]]; then
-            # Verify the path actually exists and is a regular executable file
-            if [[ -f "$zsh_path" && -x "$zsh_path" ]]; then
-                echo "$zsh_path" >> /etc/shells
-                msg GREEN "Added $zsh_path to /etc/shells"
-            else
-                err "zsh path does not exist or is not executable: $zsh_path"
-                exit 1
-            fi
+        if [[ "$zsh_path" =~ ^/[a-zA-Z0-9/_-]+/zsh$ && -x "$zsh_path" ]]; then
+            echo "$zsh_path" >> /etc/shells
+            msg GREEN "Added $zsh_path to /etc/shells"
         else
-            err "Invalid zsh path format: $zsh_path"
+            err "Invalid zsh path: $zsh_path"
             exit 1
         fi
     fi
     
-    local u_shell=$(get_user_shell "$REAL_USER")
+    local u_shell=$(get_user_info "$REAL_USER" shell)
     [[ "$u_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" "$REAL_USER"; msg GREEN "Changed shell for $REAL_USER"; } || msg GREEN "Shell already set for $REAL_USER"
 
     if [[ "$OS" == "macos" ]]; then
         msg GREEN "Skipping root shell change (not needed on macOS)"
     else
-        local r_shell=$(get_user_shell "root")
+        local r_shell=$(get_user_info "root" shell)
         [[ "$r_shell" != "$zsh_path" ]] && { chsh -s "$zsh_path" root; msg GREEN "Changed shell for root"; } || msg GREEN "Shell already set for root"
     fi
 }
@@ -442,7 +416,7 @@ main() {
     trap 'rm -rf "$TEMP_DIR"; cleanup' EXIT
 
     readonly REAL_USER="${SUDO_USER:-$(whoami)}"
-    readonly REAL_HOME=$(get_user_home "$REAL_USER")
+    readonly REAL_HOME=$(get_user_info "$REAL_USER" home)
     [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]] && { err "Cannot determine home directory"; exit 1; }
 
     # PHASE 2: Marker file exists - check if we need to complete setup
