@@ -6,6 +6,7 @@ readonly SCRIPT_DIR="${BASH_SOURCE[0]:+$(cd "$(dirname "${BASH_SOURCE[0]}")" && 
 [[ -n "${BASH_SOURCE[0]:-}" ]] && readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")" || readonly SCRIPT_NAME="install.sh"
 readonly SCRIPT_VERSION="1.0.0"
 readonly LOG_FILE=$(mktemp /tmp/install.XXXXXX.log)
+readonly PLATFORM=$(uname -s)
 
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
@@ -35,7 +36,7 @@ log_msg "[ERROR] $*"
 # Cross-platform user info functions
 get_user_home() {
     local user="$1"
-    if [[ "$(uname -s)" == "Darwin" ]]; then
+    if [[ "$PLATFORM" == "Darwin" ]]; then
         dscl . -read /Users/"$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}'
     else
         getent passwd "$user" 2>/dev/null | cut -d: -f6
@@ -44,7 +45,7 @@ get_user_home() {
 
 get_user_shell() {
     local user="$1"
-    if [[ "$(uname -s)" == "Darwin" ]]; then
+    if [[ "$PLATFORM" == "Darwin" ]]; then
         dscl . -read /Users/"$user" UserShell 2>/dev/null | awk '{print $2}'
     else
         getent passwd "$user" 2>/dev/null | cut -d: -f7
@@ -148,7 +149,7 @@ fi
 }
 
 detect_os() {
-    case "$(uname -s)" in
+    case "$PLATFORM" in
     Linux)
         OS="linux"
         [[ -f /etc/os-release ]] || { err "Cannot detect Linux distribution"; exit 1; }
