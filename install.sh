@@ -7,9 +7,16 @@ readonly PLATFORM=$(uname -s)
 [[ -t 1 ]] && { readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'; } || { readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''; }
 
 msg() {
-    local color_name="${1^^}" text="${*:2}"
-    local color="${!color_name:-}"
-    printf "%b[%s]%b %s\n" "$color" "$1" "$NC" "$text"
+    local color_code="" text="${*:2}"
+    # Convert to uppercase for variable lookup (compatible with Bash 3.2)
+    case "$1" in
+        RED|red) color_code="$RED" ;;
+        GREEN|green) color_code="$GREEN" ;;
+        YELLOW|yellow) color_code="$YELLOW" ;;
+        BLUE|blue) color_code="$BLUE" ;;
+        *) color_code="" ;;
+    esac
+    printf "%b[%s]%b %s\n" "$color_code" "$1" "$NC" "$text"
 }
 err() {
     printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$*" >&2
@@ -531,11 +538,11 @@ main() {
     msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
 
     check_sudo
-    # Check for brew after SUDO_USER validation
+    detect_os
+    # Check for brew after SUDO_USER validation and OS detection
     if [[ "$OS" == "macos" ]]; then
         command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
     fi
-    detect_os
     update_packages
     install_packages
     backup_dotfiles
