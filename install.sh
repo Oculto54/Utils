@@ -208,20 +208,63 @@ backup_dotfiles() {
 
 download_zshrc() {
     msg GREEN "Downloading .zshrc configuration..."
-    local url="https://raw.githubusercontent.com/Oculto54/Utils/main/.zshrc"
+    local base_url="https://raw.githubusercontent.com/Oculto54/Utils/main"
+    local url="${base_url}/.zshrc"
+    local checksum_url="${base_url}/.zshrc.sha256"
     local tmp="$TEMP_DIR/.zshrc.tmp"
+    local checksum_tmp="$TEMP_DIR/.zshrc.sha256.tmp"
     local target="$REAL_HOME/.zshrc"
-    
+
     [[ "${DRY_RUN:-0}" == "1" ]] && { msg GREEN "[DRY-RUN] Would download: $url"; return 0; }
-    
+
+    # Download .zshrc
     local ok=0
     command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$url" -o "$tmp" && ok=1
     [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$url" -O "$tmp" && ok=1
     [[ $ok -eq 0 ]] && { err "Failed to download .zshrc"; exit 1; }
-    
-    [[ -s "$tmp" ]] && grep -qE "(zsh|#!/bin)" "$tmp" 2>/dev/null || { err "Downloaded file invalid"; exit 1; }
-    
+
+    # Download checksum file
+    ok=0
+    command -v curl &>/dev/null && curl -fsSL --max-time 30 --retry 3 "$checksum_url" -o "$checksum_tmp" && ok=1
+    [[ $ok -eq 0 ]] && command -v wget &>/dev/null && wget -q --timeout=30 --tries=3 "$checksum_url" -O "$checksum_tmp" && ok=1
+    [[ $ok -eq 0 ]] && { err "Failed to download .zshrc.sha256"; rm -f "$tmp"; exit 1; }
+
+    # Verify SHA256 checksum
+    local expected_hash computed_hash
+    expected_hash=$(awk '{print $1}' "$checksum_tmp" 2>/dev/null)
+    [[ -z "$expected_hash" ]] && { err "Failed to read expected hash"; rm -f "$tmp" "$checksum_tmp"; exit 1; }
+
+    # Validate hash format (64 hex characters)
+    [[ "$expected_hash" =~ ^[a-fA-F0-9]{64}$ ]] || { err "Invalid hash format in checksum file"; rm -f "$tmp" "$checksum_tmp"; exit 1; }
+
+    # Compute hash of downloaded file
+    if command -v sha256sum &>/dev/null; then
+        computed_hash=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
+    elif command -v shasum &>/dev/null; then
+        computed_hash=$(shasum -a 256 "$tmp" 2>/dev/null | awk '{print $1}')
+    else
+        err "Neither sha256sum nor shasum found"
+        rm -f "$tmp" "$checksum_tmp"
+        exit 1
+    fi
+
+    # Strict verification - fail if mismatch
+    [[ "$computed_hash" != "$expected_hash" ]] && {
+        err "SHA256 verification failed!"
+        err "Expected: $expected_hash"
+        err "Computed: $computed_hash"
+        rm -f "$tmp" "$checksum_tmp"
+        exit 1
+    }
+
+    msg GREEN "SHA256 verification passed"
+
+    # Additional validation
+    [[ -s "$tmp" ]] || { err "Downloaded file is empty"; rm -f "$tmp" "$checksum_tmp"; exit 1; }
+    grep -qE "(zsh|#!/bin)" "$tmp" 2>/dev/null || { err "Downloaded file invalid"; rm -f "$tmp" "$checksum_tmp"; exit 1; }
+
     mv -f "$tmp" "$target" || { err "Failed to install .zshrc"; exit 1; }
+    rm -f "$checksum_tmp"
     chmod 644 "$target"
     if [[ -n "${SUDO_USER:-}" ]]; then
         local user_group
