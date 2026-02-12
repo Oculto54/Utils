@@ -27,6 +27,57 @@ get_user_info() {
     fi
 }
 
+# Cross-platform helpers
+get_file_owner() {
+    local file="$1"
+    if stat -c '%U' "$file" &>/dev/null; then
+        stat -c '%U' "$file"
+    else
+        stat -f '%Su' "$file" 2>/dev/null
+    fi
+}
+
+validate_file_ownership() {
+    local file="$1"
+    local expected_owner="$2"
+    
+    local file_owner
+    file_owner=$(get_file_owner "$file")
+    
+    if [[ -z "$file_owner" ]]; then
+        err "Cannot determine owner of $file"
+        return 1
+    elif [[ "$file_owner" != "$expected_owner" ]]; then
+        err "Security: $file not owned by $expected_owner (owner: $file_owner)"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Determine hash command once
+get_hash_command() {
+    if command -v sha256sum &>/dev/null; then
+        echo "sha256sum"
+    elif command -v shasum &>/dev/null; then
+        echo "shasum -a 256"
+    else
+        echo ""
+    fi
+}
+
+compute_hash() {
+    local file="$1"
+    local hash_cmd
+    hash_cmd=$(get_hash_command)
+    
+    if [[ -n "$hash_cmd" ]]; then
+        $hash_cmd "$file" 2>/dev/null | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
 # Set ownership to SUDO_USER if running under sudo
 set_ownership() {
     local target="$1"
@@ -171,7 +222,7 @@ detect_os() {
             ;;
         Darwin)
             OS="macos"; PKG_MGR="brew"
-            command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
+            # brew check moved to after SUDO_USER validation in main()
             ;;
         *) err "Unsupported OS"; exit 1 ;;
     esac
@@ -256,7 +307,11 @@ backup_dotfiles() {
     
     [[ ${#to_backup[@]} -eq 0 ]] && { msg GREEN "No dotfiles to backup"; rmdir "$dir" 2>/dev/null || true; return 0; }
     
-    tar -czf "$dir/dotfiles.tar.gz" -C "$REAL_HOME" "${to_backup[@]}" 2>/dev/null && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
+    # Change to directory first to avoid -C flag compatibility issues
+    (
+        cd "$REAL_HOME" || { err "Failed to change to home directory"; exit 1; }
+        tar -czf "$dir/dotfiles.tar.gz" "${to_backup[@]}" 2>/dev/null
+    ) && msg GREEN "Backed up ${#to_backup[@]} file(s)" || msg YELLOW "Some files could not be backed up"
     set_ownership "$dir" -R || return 1
     msg GREEN "Backup complete: $dir"
 }
@@ -294,12 +349,9 @@ download_zshrc() {
     [[ "$expected_hash" =~ ^[a-fA-F0-9]{64}$ ]] || { err "Invalid hash format in checksum file"; rm -f "$tmp" "$checksum_tmp"; exit 1; }
 
     # Compute hash of downloaded file
-    if command -v sha256sum &>/dev/null; then
-        computed_hash=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
-    elif command -v shasum &>/dev/null; then
-        computed_hash=$(shasum -a 256 "$tmp" 2>/dev/null | awk '{print $1}')
-    else
-        err "Neither sha256sum nor shasum found"
+    computed_hash=$(compute_hash "$tmp")
+    if [[ $? -ne 0 || -z "$computed_hash" ]]; then
+        err "Failed to compute hash"
         rm -f "$tmp" "$checksum_tmp"
         exit 1
     fi
@@ -357,10 +409,7 @@ create_root_symlinks() {
         # Only symlink existing regular files
         if [[ -f "$target" ]]; then
             # Verify file is owned by SUDO_USER
-            local file_owner
-            file_owner=$(stat -c '%U' "$target" 2>/dev/null) || file_owner=$(stat -f '%Su' "$target" 2>/dev/null)
-            if [[ "$file_owner" != "$SUDO_USER" ]]; then
-                err "Security: $target not owned by $SUDO_USER (owner: $file_owner)"
+            if ! validate_file_ownership "$target" "$SUDO_USER"; then
                 skipped+=("$f")
                 continue
             fi
@@ -447,6 +496,10 @@ main() {
         msg GREEN "Resuming Phase 2: Checking root symlinks..."
 
         check_sudo
+        # Check for brew after SUDO_USER validation
+        if [[ "$OS" == "macos" ]]; then
+            command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
+        fi
         detect_os
 
         check_symlinks_status
@@ -492,6 +545,10 @@ main() {
     msg GREEN "Starting installation for user: $REAL_USER (home: $REAL_HOME)"
 
     check_sudo
+    # Check for brew after SUDO_USER validation
+    if [[ "$OS" == "macos" ]]; then
+        command -v brew &>/dev/null || { err "Homebrew not found. Install from https://brew.sh"; exit 1; }
+    fi
     detect_os
     update_packages
     install_packages
