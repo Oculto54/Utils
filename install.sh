@@ -342,10 +342,16 @@ change_shell() {
     
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
         if [[ "$zsh_path" =~ ^/[^[:space:]]+/zsh$ ]]; then
-            echo "$zsh_path" >> /etc/shells
-            msg GREEN "Added $zsh_path to /etc/shells"
+            # Verify the path actually exists and is a regular executable file
+            if [[ -f "$zsh_path" && -x "$zsh_path" ]]; then
+                echo "$zsh_path" >> /etc/shells
+                msg GREEN "Added $zsh_path to /etc/shells"
+            else
+                err "zsh path does not exist or is not executable: $zsh_path"
+                exit 1
+            fi
         else
-            err "Invalid zsh path: $zsh_path"
+            err "Invalid zsh path format: $zsh_path"
             exit 1
         fi
     fi
