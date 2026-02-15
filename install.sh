@@ -9,7 +9,7 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
 
 # GitHub repository URL
-readonly REPO_URL="https://raw.githubusercontent.com/Oculto54/teste/main"
+readonly REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
 
 # Functions for colored output
 msg() {
