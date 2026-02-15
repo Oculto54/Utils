@@ -268,22 +268,32 @@ setup_nanorc() {
     
     msg "Setting up cross-platform .nanorc..."
     
-    # Determine the correct syntax directory based on OS
-    local syntax_include=""
-    if [[ "$OS" == "macos" ]]; then
-        # Check common macOS nano syntax locations
-        for dir in /opt/homebrew/share/nano /usr/local/share/nano /opt/local/share/nano; do
-            if [[ -d "$dir" ]]; then
-                syntax_include="include \"$dir/*.nanorc\""
-                break
-            fi
-        done
-    else
-        # Linux path
-        if [[ -d /usr/share/nano ]]; then
-            syntax_include="include \"/usr/share/nano/*.nanorc\""
-        fi
+  # Determine the correct syntax directory based on OS
+  local syntax_include=""
+  if [[ "$OS" == "macos" ]]; then
+    # Try brew --prefix first for flexibility
+    if command -v brew &>/dev/null; then
+      local brew_prefix
+      brew_prefix=$(brew --prefix)
+      if [[ -d "$brew_prefix/share/nano" ]]; then
+        syntax_include="include \"$brew_prefix/share/nano/*.nanorc\""
+      fi
     fi
+    # Fallback to common paths if brew method didn't work
+    if [[ -z "$syntax_include" ]]; then
+      for dir in /opt/homebrew/share/nano /usr/local/share/nano /opt/local/share/nano; do
+        if [[ -d "$dir" ]]; then
+          syntax_include="include \"$dir/*.nanorc\""
+          break
+        fi
+      done
+    fi
+  else
+    # Linux path
+    if [[ -d /usr/share/nano ]]; then
+      syntax_include="include \"/usr/share/nano/*.nanorc\""
+    fi
+  fi
     
     # Prepend the include line to the existing .nanorc
     if [[ -n "$syntax_include" ]]; then
