@@ -71,21 +71,29 @@ alias h='history'
 alias c='clear'
 alias grep='grep --color=auto'
 alias diff='diff --color=auto 2>/dev/null || diff'
+alias reload='exec ${SHELL} -l'
+
+# Common update components
+ZINIT_UPDATE='zinit update --all && zinit self-update --all'
+NPM_UPDATE=''
+command -v npm &>/dev/null && NPM_UPDATE=' && npm update -g && npm cache clean --force'
 
 # List aliases with colors
 if [[ "$OSTYPE" == "darwin"* ]]; then
   alias ls='ls -G'
   alias ll='ls -lahG'
+  alias du='du -hd 1 | sort -hr'
   #alias l='ls -lhG'
   #alias la='ls -laG'
-  alias update='brew update && brew upgrade && zinit update --all && zinit self-update --all && brew cleanup'
+  alias update="brew update && brew upgrade && ${ZINIT_UPDATE} && brew cleanup${NPM_UPDATE}"
 else
   alias ls='ls --color=auto'
   alias ll='ls --color=auto -lah'
+  alias du='du -h --max-depth=1 | sort -hr'
   #alias l='ls --color=auto -lh'
   #alias la='ls --color=auto -la'
   # Only create update alias if apt exists
-  command -v apt &>/dev/null && alias update='sudo apt update && sudo apt upgrade -y && zinit update --all && zinit self-update --all && sudo apt autoremove && sudo apt autoclean'
+  command -v apt &>/dev/null && alias update="sudo apt update && sudo apt upgrade -y && ${ZINIT_UPDATE} && sudo apt autoremove && sudo apt autoclean${NPM_UPDATE}"
 fi
 
 # Directory navigation
