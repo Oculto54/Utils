@@ -74,7 +74,7 @@ alias diff='diff --color=auto 2>/dev/null || diff'
 alias reload='exec ${SHELL} -l'
 
 # Common update components
-ZINIT_UPDATE='zinit update --all && zinit self-update --all'
+ZINIT_UPDATE='zinit update --parallel --all && zinit self-update'
 NPM_UPDATE=''
 command -v npm &>/dev/null && NPM_UPDATE=' && npm update -g && npm cache clean --force'
 
@@ -149,3 +149,20 @@ zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
 zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
 
 # zprof
+
+# bun
+if [ -s "$HOME/.bun/_bun" ]; then
+  source "$HOME/.bun/_bun"
+  export BUN_INSTALL="$HOME/.bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+fi
+
+# opencode
+if [ -f "$HOME/.opencode/bin/opencode" ]; then
+  export PATH="$HOME/.opencode/bin:$PATH"
+fi
+
+# Antigravity
+if [ -d "$HOME/.antigravity/antigravity" ]; then
+  export PATH="$HOME/.antigravity/antigravity/bin:$PATH"
+fi
