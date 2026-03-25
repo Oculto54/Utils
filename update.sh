@@ -638,12 +638,20 @@ download_and_install_dotfiles() {
             continue
         fi
 
-        # Check if file exists and ask about replacement
-        if [[ -f "$home/$file" ]]; then
-            if ! ask_replace "$file" "replace"; then
-                msg "Skipped $file"
-                rm -f "$temp_file"
-                continue
+        # For .nanorc: ALWAYS install the new version (setup_nanorc will add the include path)
+        # For other files: ask about replacement
+        if [[ "$file" == ".nanorc" ]]; then
+            if [[ -f "$home/$file" ]]; then
+                backup_file "$file" "pre-update"
+            fi
+        else
+            # Check if file exists and ask about replacement
+            if [[ -f "$home/$file" ]]; then
+                if ! ask_replace "$file" "replace"; then
+                    msg "Skipped $file"
+                    rm -f "$temp_file"
+                    continue
+                fi
             fi
         fi
 
