@@ -79,6 +79,13 @@ ask_replace() {
         return 0
     fi
 
+    # Check if stdin is a TTY (interactive mode)
+    if [[ ! -t 0 ]]; then
+        # Non-interactive (piped), default to replace
+        warn "Non-interactive mode detected, replacing $file"
+        return 0
+    fi
+
     msg "File exists: $file"
     printf "  [R]eplace | [K]eep existing | [B]ackup and replace: "
     local choice
@@ -88,7 +95,7 @@ ask_replace() {
         r|R) return 0 ;;
         k|K) return 2 ;;
         b|B) backup_file "$file" "manual"; return 0 ;;
-        *) warn "Invalid choice, keeping existing file"; return 2 ;;
+        *) warn "Invalid choice, replacing $file"; return 0 ;;
     esac
 }
 
