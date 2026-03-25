@@ -332,98 +332,16 @@ download_file() {
 }
 
 # =============================================================================
-# .zshrc Merge Logic
+# =============================================================================
+# .nanorc Setup - Add include path at line 2
 # =============================================================================
 
-extract_local_section() {
-    local existing_zshrc="$1"
-    local temp_file
-    temp_file=$(mktemp)
-
-    # Check if file exists and has the marker pattern
-    if [[ ! -f "$existing_zshrc" ]]; then
-        rm -f "$temp_file"
-        return 1
-    fi
-    
-    # Check if file has "# Local Customizations" section
-    if ! grep -q "^# Local Customizations" "$existing_zshrc" 2>/dev/null; then
-        rm -f "$temp_file"
-        return 1
-    fi
-
-    # Use sed to extract from "Local Customizations" onwards
-    # This is more reliable than awk on some systems
-    local local_section
-    local_section=$(sed -n '/^# Local Customizations$/,$p' "$existing_zshrc")
-
-    if [[ -z "$local_section" ]]; then
-        rm -f "$temp_file"
-        return 1
-    fi
-
-    # Write the header and local section to temp file
-    {
-        echo '# ============================================================================='
-        echo '# Local Zsh Configuration'
-        echo '# ============================================================================='
-        echo '#'
-        echo '# This is the LOCAL configuration file that is managed locally on your machine.'
-        echo '# It loads the shared configuration from .zshrc-profile, which contains all'
-        echo '# the actual shell settings, plugins, aliases, and prompt configuration.'
-        echo '#'
-        echo '# .zshrc-profile is downloaded/updated separately and should not be edited locally.'
-        echo '# Add any LOCAL customizations (PATH, aliases, variables) in the section below.'
-        echo '#'
-        echo '# ============================================================================='
-        echo ''
-        echo '# Load the shared profile configuration'
-        echo 'source "${HOME}/.zshrc-profile"'
-        echo ''
-        echo '# ============================================================================='
-        echo '# Local Customizations'
-        echo '# ============================================================================='
-        echo "$local_section"
-    } > "$temp_file"
-    
-    echo "$temp_file"
-    return 0
-}
-
-merge_zshrc() {
-    local home
-    home=$(get_real_home)
-    local existing_zshrc="$home/.zshrc"
-    local new_dummy_zshrc="$home/.zshrc.new"
-    local temp_merged
-
-    # Check if existing .zshrc has local customizations
-    temp_merged=$(extract_local_section "$existing_zshrc")
-
-    if [[ -n "$temp_merged" ]] && [[ -s "$temp_merged" ]]; then
-        msg "Found local customizations in existing .zshrc"
-        mv "$temp_merged" "$new_dummy_zshrc"
-        msg "Merged local customizations into new .zshrc"
-        return 0
-    else
-        # No local section found, just remove temp file
-        rm -f "$temp_merged"
-        return 1
-    fi
-}
-
-# =============================================================================
-# .nanorc Setup
-# =============================================================================
-
-setup_nanorc() {
+setup_nanorc_include() {
     local home
     home=$(get_real_home)
     local nanorc_file="$home/.nanorc"
     local temp_file
     temp_file=$(mktemp)
-
-    msg "Setting up cross-platform .nanorc..."
 
     # Determine the correct syntax directory based on OS
     local syntax_include=""
@@ -458,19 +376,11 @@ setup_nanorc() {
             tail -n +2 "$nanorc_file" 2>/dev/null || true
         } > "$temp_file"
         mv -f "$temp_file" "$nanorc_file"
-        msg "Added syntax include at line 2: $syntax_include"
+        msg "Added nano include at line 2: $syntax_include"
     else
         msg "No nano syntax directory found, skipping include"
         rm -f "$temp_file"
     fi
-
-    # Fix ownership
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$nanorc_file"
-    fi
-    chmod 644 "$nanorc_file"
-
-    msg ".nanorc configured for $OS"
 }
 
 # =============================================================================
@@ -620,99 +530,76 @@ download_and_install_dotfiles() {
 
     msg "Downloading dotfiles from repository..."
 
+    # Download all files first
     for file in $DOTFILES; do
         local temp_file="$temp_dir/$file"
 
-        # Download to temp location
         if ! download_file "$file" "$temp_file"; then
             has_errors=1
             continue
         fi
 
-        # For .nanorc: ALWAYS install the new version (setup_nanorc will add the include path)
-        # For other files: ask about replacement
-        if [[ "$file" == ".nanorc" ]]; then
-            if [[ -f "$home/$file" ]]; then
-                backup_file "$file" "pre-update"
-            fi
-        else
-            # Check if file exists and ask about replacement
-            if [[ -f "$home/$file" ]]; then
-                if ! ask_replace "$file" "replace"; then
-                    msg "Skipped $file"
-                    rm -f "$temp_file"
-                    continue
-                fi
-            fi
-        fi
-
-        # Move to home directory
-        mv -f "$temp_file" "$home/$file"
-
-        # Set correct ownership
-        if [[ -n "${SUDO_USER:-}" ]]; then
-            chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/$file"
-        fi
-        chmod 644 "$home/$file"
-
-        msg "Installed $file"
+        msg "Downloaded $file"
     done
 
-    # Handle .zshrc (the dummy/local one)
-    handle_zshrc() {
-        local existing_zshrc="$home/.zshrc"
-        local new_zshrc="$temp_dir/.zshrc"
-
-        # Download the standard .zshrc to temp
-        if ! download_file ".zshrc" "$new_zshrc"; then
-            # If download fails, warn but continue
-            warn "Could not download standard .zshrc, skipping .zshrc installation"
-            return 1
+    # Install .zshrc-profile: ALWAYS (this is the source of truth for shell config)
+    if [[ -f "$temp_dir/.zshrc-profile" ]]; then
+        if [[ -f "$home/.zshrc-profile" ]]; then
+            backup_file ".zshrc-profile" "pre-update"
         fi
-        
-        if [[ ! -f "$new_zshrc" ]]; then
-            err "Downloaded .zshrc file not found in temp"
-            return 1
-        fi
-
-        # Check if existing .zshrc exists - we need to merge local customizations
-        if [[ -f "$existing_zshrc" ]]; then
-            msg "Existing .zshrc found - checking for local customizations..."
-
-            # Backup existing before replacing
-            backup_file ".zshrc" "pre-replace"
-
-            # Try to merge local sections
-            local temp_merged
-            temp_merged=$(extract_local_section "$existing_zshrc")
-
-            if [[ -n "$temp_merged" ]] && [[ -s "$temp_merged" ]]; then
-                msg "Found local customizations - merging into new .zshrc..."
-                mv "$temp_merged" "$new_zshrc"
-            else
-                warn "No local customizations found in existing .zshrc"
-                rm -f "$temp_merged"
-            fi
-        fi
-
-        # ALWAYS install the new dummy .zshrc because it sources .zshrc-profile
-        # This is critical - without it, .zshrc-profile is never loaded
-        if ! mv -f "$new_zshrc" "$home/.zshrc"; then
-            err "Failed to install .zshrc"
-            return 1
-        fi
-
-        # Set correct ownership
+        mv -f "$temp_dir/.zshrc-profile" "$home/.zshrc-profile"
         if [[ -n "${SUDO_USER:-}" ]]; then
-            chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc"
+            chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc-profile"
         fi
-        chmod 644 "$home/.zshrc"
+        chmod 644 "$home/.zshrc-profile"
+        msg "Installed .zshrc-profile"
+    fi
 
-        msg "Installed .zshrc (sources .zshrc-profile)"
-        return 0
-    }
+    # Install .nanorc: only if doesn't exist (add include path at line 2)
+    if [[ -f "$temp_dir/.nanorc" ]]; then
+        if [[ ! -f "$home/.nanorc" ]]; then
+            mv -f "$temp_dir/.nanorc" "$home/.nanorc"
+            if [[ -n "${SUDO_USER:-}" ]]; then
+                chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.nanorc"
+            fi
+            chmod 644 "$home/.nanorc"
+            msg "Installed .nanorc"
+            # Add the nano include path at line 2
+            setup_nanorc_include
+        else
+            msg "Keeping existing .nanorc"
+            rm -f "$temp_dir/.nanorc"
+        fi
+    fi
 
-    handle_zshrc
+    # Install .p10k.zsh: only if doesn't exist
+    if [[ -f "$temp_dir/.p10k.zsh" ]]; then
+        if [[ ! -f "$home/.p10k.zsh" ]]; then
+            mv -f "$temp_dir/.p10k.zsh" "$home/.p10k.zsh"
+            if [[ -n "${SUDO_USER:-}" ]]; then
+                chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.p10k.zsh"
+            fi
+            chmod 644 "$home/.p10k.zsh"
+            msg "Installed .p10k.zsh"
+        else
+            msg "Keeping existing .p10k.zsh"
+            rm -f "$temp_dir/.p10k.zsh"
+        fi
+    fi
+
+    # Install .zshrc: only if doesn't exist (dummy one that sources .zshrc-profile)
+    if [[ ! -f "$home/.zshrc" ]]; then
+        if download_file ".zshrc" "$temp_dir/.zshrc"; then
+            mv -f "$temp_dir/.zshrc" "$home/.zshrc"
+            if [[ -n "${SUDO_USER:-}" ]]; then
+                chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc"
+            fi
+            chmod 644 "$home/.zshrc"
+            msg "Installed .zshrc (sources .zshrc-profile)"
+        fi
+    else
+        msg "Keeping existing .zshrc"
+    fi
 
     # Cleanup temp directory
     rm -rf "$temp_dir"
