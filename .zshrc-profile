@@ -102,6 +102,9 @@ alias ...='cd ../..'
 alias ....='cd ../../..'
 #alias -- -='cd -'
 
+# Update dotfiles from repo
+alias update-repo='curl -fsSL https://raw.githubusercontent.com/Oculto54/Utils/main/update.sh | zsh'
+
 # =============================================================================
 # iTerm2 integration (source if present)
 # =============================================================================
