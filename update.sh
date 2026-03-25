@@ -339,40 +339,64 @@ extract_local_section() {
     local existing_zshrc="$1"
     local temp_file
     temp_file=$(mktemp)
+    
+    msg "  extract_local_section: checking file: $existing_zshrc"
 
-    # Look for the "Local Customizations" section
-    if grep -q "^# =============================================================================" "$existing_zshrc" 2>/dev/null; then
-        # Find and extract everything from "Local Customizations" marker onwards
-        local local_section
-        local_section=$(awk '/^# Local Customizations$/,0' "$existing_zshrc")
+    # Check if file exists and has the marker pattern
+    if [[ ! -f "$existing_zshrc" ]]; then
+        msg "  extract_local_section: file does not exist"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # Check if file has "# Local Customizations" section
+    if ! grep -q "^# Local Customizations" "$existing_zshrc" 2>/dev/null; then
+        msg "  extract_local_section: no Local Customizations section found"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    msg "  extract_local_section: found marker, extracting..."
 
-        if [[ -n "$local_section" ]]; then
-            cat > "$temp_file" <<'HEADER'
-# =============================================================================
-# Local Zsh Configuration
-# =============================================================================
-#
-# This is the LOCAL configuration file that is managed locally on your machine.
-# It loads the shared configuration from .zshrc-profile, which contains all
-# the actual shell settings, plugins, aliases, and prompt configuration.
-#
-# .zshrc-profile is downloaded/updated separately and should not be edited locally.
-# Add any LOCAL customizations (PATH, aliases, variables) in the section below.
-#
-# =============================================================================
+    # Extract everything from "Local Customizations" marker onwards
+    local local_section
+    local_section=$(awk '/^# Local Customizations$/,0' "$existing_zshrc")
 
-# Load the shared profile configuration
-source "${HOME}/.zshrc-profile"
-
-HEADER
-            echo "$local_section" >> "$temp_file"
-            echo "$temp_file"
-            return 0
-        fi
+    if [[ -z "$local_section" ]]; then
+        msg "  extract_local_section: awk returned empty"
+        rm -f "$temp_file"
+        return 1
     fi
 
-    rm -f "$temp_file"
-    return 1
+    msg "  extract_local_section: got $(echo "$local_section" | wc -l) lines"
+
+    # Write the header and local section to temp file
+    {
+        echo '# ============================================================================='
+        echo '# Local Zsh Configuration'
+        echo '# ============================================================================='
+        echo '#'
+        echo '# This is the LOCAL configuration file that is managed locally on your machine.'
+        echo '# It loads the shared configuration from .zshrc-profile, which contains all'
+        echo '# the actual shell settings, plugins, aliases, and prompt configuration.'
+        echo '#'
+        echo '# .zshrc-profile is downloaded/updated separately and should not be edited locally.'
+        echo '# Add any LOCAL customizations (PATH, aliases, variables) in the section below.'
+        echo '#'
+        echo '# ============================================================================='
+        echo ''
+        echo '# Load the shared profile configuration'
+        echo 'source "${HOME}/.zshrc-profile"'
+        echo ''
+        echo '# ============================================================================='
+        echo '# Local Customizations'
+        echo '# ============================================================================='
+        echo "$local_section"
+    } > "$temp_file"
+    
+    msg "  extract_local_section: created temp file with merged content"
+    echo "$temp_file"
+    return 0
 }
 
 merge_zshrc() {
@@ -663,8 +687,8 @@ download_and_install_dotfiles() {
 
             # Try to merge local sections
             local temp_merged
-            msg "Calling extract_local_section..."
-            temp_merged=$(extract_local_section "$existing_zshrc")
+            msg "Calling extract_local_section with file: $existing_zshrc"
+            temp_merged=$(extract_local_section "$existing_zshrc") 2>&1
             msg "  extract_local_section returned: '$temp_merged'"
 
             if [[ -n "$temp_merged" ]] && [[ -s "$temp_merged" ]]; then
