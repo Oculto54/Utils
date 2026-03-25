@@ -222,8 +222,8 @@ update_packages() {
             fi
         fi
     else
-        $sudo_prefix apt-get update
-        $sudo_prefix apt-get upgrade -y
+        $sudo_prefix apt update
+        $sudo_prefix apt upgrade -y
     fi
 
     msg "Package update complete"
@@ -242,7 +242,7 @@ install_packages() {
             brew install git nano zsh curl wget btop
         fi
     else
-        $sudo_prefix apt-get install -y git nano zsh curl wget btop
+        $sudo_prefix apt install -y git nano zsh curl wget btop
     fi
 
     msg "Packages installed successfully"
