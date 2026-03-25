@@ -417,8 +417,20 @@ create_root_symlinks() {
             ln -sf "$user_home/$file" "/root/$file"
             msg "Created symlink: /root/$file -> $user_home/$file"
             linked=$((linked + 1))
+        else
+            msg "Skipped /root/$file (source not found: $user_home/$file)"
         fi
     done
+    
+    # Special check for .zshrc-profile - it's critical for .zshrc to work
+    if [[ ! -f "/root/.zshrc-profile" ]]; then
+        if [[ -f "$user_home/.zshrc-profile" ]]; then
+            ln -sf "$user_home/.zshrc-profile" "/root/.zshrc-profile"
+            msg "Created symlink: /root/.zshrc-profile -> $user_home/.zshrc-profile"
+        else
+            warn ".zshrc-profile not found in $user_home, root shell may not work correctly"
+        fi
+    fi
 
     if [[ $linked -gt 0 ]]; then
         msg "Created $linked root symlinks"
