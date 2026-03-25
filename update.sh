@@ -678,10 +678,7 @@ main() {
     # Step 8: Download and install dotfiles
     download_and_install_dotfiles
 
-    # Step 9: Setup .nanorc with correct path
-    setup_nanorc
-
-    # Step 10: Create root symlinks
+    # Step 9: Create root symlinks
     create_root_symlinks
 
     # Step 11: Change shell to zsh
