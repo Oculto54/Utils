@@ -1,7 +1,11 @@
+# Enable syntax highlighting for all available languages
+
 
 #   
 set linenumbers
 set autoindent
 set mouse
-set tabsize 2
-
+set tabsize 4
+set tabstospaces
+set softwrap
+set casesensitive off
