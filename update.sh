@@ -775,6 +775,15 @@ main() {
     msg "Cleaning up backup files older than 7 days..."
     find "$real_home" -maxdepth 1 -type d -name ".dotfiles_backup_*" -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
 
+    # Linux apt cleanup
+    if [[ "$OS" == "linux" ]]; then
+        local sudo_prefix
+        sudo_prefix=$(get_sudo_prefix)
+        msg "Running apt autoremove and autoclean..."
+        $sudo_prefix apt autoremove -y 2>/dev/null || true
+        $sudo_prefix apt autoclean 2>/dev/null || true
+    fi
+
     msg ""
     msg "========================================"
     msg "Update complete!"
