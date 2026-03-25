@@ -145,6 +145,30 @@ get_user_shell() {
     fi
 }
 
+# Check if we can run privileged commands (sudo available or running as root)
+can_sudo() {
+    if [[ $EUID -eq 0 ]]; then
+        return 0  # Already root
+    fi
+    if [[ "$OS" == "macos" ]]; then
+        # On macOS, we don't need sudo for brew
+        return 0
+    fi
+    # On Linux, check if sudo is available
+    command -v sudo &>/dev/null && sudo -n true 2>/dev/null
+}
+
+# Get the sudo prefix for commands
+get_sudo_prefix() {
+    if [[ "$OS" == "macos" ]]; then
+        echo ""  # No sudo needed for brew
+    elif [[ $EUID -eq 0 ]]; then
+        echo ""  # Already root
+    else
+        echo "sudo"  # Need sudo
+    fi
+}
+
 # =============================================================================
 # Homebrew Installation (macOS only)
 # =============================================================================
@@ -186,6 +210,9 @@ install_homebrew() {
 update_packages() {
     msg "Updating package lists and upgrading packages..."
 
+    local sudo_prefix
+    sudo_prefix=$(get_sudo_prefix)
+
     if [[ "$OS" == "macos" ]]; then
         if command -v brew &>/dev/null; then
             if [[ -n "${SUDO_USER:-}" ]]; then
@@ -195,8 +222,8 @@ update_packages() {
             fi
         fi
     else
-        apt-get update
-        apt-get upgrade -y
+        $sudo_prefix apt-get update
+        $sudo_prefix apt-get upgrade -y
     fi
 
     msg "Package update complete"
@@ -205,6 +232,9 @@ update_packages() {
 install_packages() {
     msg "Installing required packages: git, nano, zsh, curl, wget, btop..."
 
+    local sudo_prefix
+    sudo_prefix=$(get_sudo_prefix)
+
     if [[ "$OS" == "macos" ]]; then
         if [[ -n "${SUDO_USER:-}" ]]; then
             su - "$SUDO_USER" -c "brew install git nano zsh curl wget btop"
@@ -212,7 +242,7 @@ install_packages() {
             brew install git nano zsh curl wget btop
         fi
     else
-        apt-get install -y git nano zsh curl wget btop
+        $sudo_prefix apt-get install -y git nano zsh curl wget btop
     fi
 
     msg "Packages installed successfully"
@@ -477,11 +507,14 @@ change_shell() {
         return 1
     fi
 
+    local sudo_prefix
+    sudo_prefix=$(get_sudo_prefix)
+
     msg "Changing default shell to zsh ($zsh_path)..."
 
     # Add zsh to /etc/shells if not present
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
-        echo "$zsh_path" >> /etc/shells
+        $sudo_prefix sh -c "echo '$zsh_path' >> /etc/shells"
         msg "Added $zsh_path to /etc/shells"
     fi
 
@@ -493,7 +526,7 @@ change_shell() {
         local current_shell
         current_shell=$(get_user_shell "$real_user")
         if [[ "$current_shell" != "$zsh_path" ]]; then
-            chsh -s "$zsh_path" "$real_user"
+            $sudo_prefix chsh -s "$zsh_path" "$real_user"
             msg "Changed shell for $real_user to zsh"
         else
             msg "Shell for $real_user is already zsh"
@@ -505,7 +538,7 @@ change_shell() {
         local root_shell
         root_shell=$(get_user_shell root)
         if [[ "$root_shell" != "$zsh_path" ]]; then
-            chsh -s "$zsh_path" root
+            $sudo_prefix chsh -s "$zsh_path" root
             msg "Changed shell for root to zsh"
         else
             msg "Shell for root is already zsh"
@@ -684,6 +717,13 @@ main() {
 
     # Step 1: Detect OS
     detect_os
+
+    # Check sudo access on Linux
+    if [[ "$OS" == "linux" ]] && ! can_sudo; then
+        err "This script requires sudo privileges on Linux."
+        err "Please run with: sudo $0"
+        exit 1
+    fi
 
     # Step 2: Detect user context
     local real_user
