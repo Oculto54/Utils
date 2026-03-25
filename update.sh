@@ -339,36 +339,28 @@ extract_local_section() {
     local existing_zshrc="$1"
     local temp_file
     temp_file=$(mktemp)
-    
-    msg "  extract_local_section: checking file: $existing_zshrc"
 
     # Check if file exists and has the marker pattern
     if [[ ! -f "$existing_zshrc" ]]; then
-        msg "  extract_local_section: file does not exist"
         rm -f "$temp_file"
         return 1
     fi
     
     # Check if file has "# Local Customizations" section
     if ! grep -q "^# Local Customizations" "$existing_zshrc" 2>/dev/null; then
-        msg "  extract_local_section: no Local Customizations section found"
         rm -f "$temp_file"
         return 1
     fi
-    
-    msg "  extract_local_section: found marker, extracting..."
 
-    # Extract everything from "Local Customizations" marker onwards
+    # Use sed to extract from "Local Customizations" onwards
+    # This is more reliable than awk on some systems
     local local_section
-    local_section=$(awk '/^# Local Customizations$/,0' "$existing_zshrc")
+    local_section=$(sed -n '/^# Local Customizations$/,$p' "$existing_zshrc")
 
     if [[ -z "$local_section" ]]; then
-        msg "  extract_local_section: awk returned empty"
         rm -f "$temp_file"
         return 1
     fi
-
-    msg "  extract_local_section: got $(echo "$local_section" | wc -l) lines"
 
     # Write the header and local section to temp file
     {
@@ -394,7 +386,6 @@ extract_local_section() {
         echo "$local_section"
     } > "$temp_file"
     
-    msg "  extract_local_section: created temp file with merged content"
     echo "$temp_file"
     return 0
 }
@@ -687,45 +678,29 @@ download_and_install_dotfiles() {
         # Check if existing .zshrc exists - we need to merge local customizations
         if [[ -f "$existing_zshrc" ]]; then
             msg "Existing .zshrc found - checking for local customizations..."
-            msg "  existing_zshrc=$existing_zshrc"
-            msg "  new_zshrc=$new_zshrc"
 
             # Backup existing before replacing
             backup_file ".zshrc" "pre-replace"
 
             # Try to merge local sections
             local temp_merged
-            msg "Calling extract_local_section with file: $existing_zshrc"
-            temp_merged=$(extract_local_section "$existing_zshrc") 2>&1
-            msg "  extract_local_section returned: '$temp_merged'"
+            temp_merged=$(extract_local_section "$existing_zshrc")
 
             if [[ -n "$temp_merged" ]] && [[ -s "$temp_merged" ]]; then
                 msg "Found local customizations - merging into new .zshrc..."
                 mv "$temp_merged" "$new_zshrc"
-                msg "  merged file size: $(stat -c%s "$new_zshrc" 2>/dev/null || echo 'unknown')"
             else
                 warn "No local customizations found in existing .zshrc"
                 rm -f "$temp_merged"
             fi
-        else
-            msg "No existing .zshrc found, will install new one"
         fi
-        
-        msg "About to install .zshrc..."
-        msg "  new_zshrc exists: $([[ -f "$new_zshrc" ]] && echo 'yes' || echo 'no')"
-        msg "  new_zshrc size: $(stat -c%s "$new_zshrc" 2>/dev/null || echo 'unknown')"
 
         # ALWAYS install the new dummy .zshrc because it sources .zshrc-profile
         # This is critical - without it, .zshrc-profile is never loaded
-        msg "  home/.zshrc target: $home/.zshrc"
-        msg "  performing: mv '$new_zshrc' '$home/.zshrc'"
         if ! mv -f "$new_zshrc" "$home/.zshrc"; then
             err "Failed to install .zshrc"
-            ls -la "$new_zshrc" 2>/dev/null || echo "new_zshrc does not exist"
-            ls -la "$home/.zshrc" 2>/dev/null || echo "home/.zshrc does not exist"
             return 1
         fi
-        msg "  mv command succeeded"
 
         # Set correct ownership
         if [[ -n "${SUDO_USER:-}" ]]; then
