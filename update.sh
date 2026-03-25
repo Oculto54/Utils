@@ -76,12 +76,13 @@ ask_replace() {
     local action="${2:-replace}"
 
     if [[ "$FORCE_MODE" == true ]]; then
+        msg "Force mode: replacing $file"
         return 0
     fi
 
     # Check if stdin is a TTY (interactive mode)
     if [[ ! -t 0 ]]; then
-        # Non-interactive (piped), default to replace
+        # Non-interactive (piped/sudo), default to replace
         warn "Non-interactive mode detected, replacing $file"
         return 0
     fi
@@ -642,33 +643,57 @@ download_and_install_dotfiles() {
         # Download the standard .zshrc to temp
         if ! download_file ".zshrc" "$new_zshrc"; then
             # If download fails, warn but continue
-            warn "Could not download standard .zshrc, skipping"
+            warn "Could not download standard .zshrc, skipping .zshrc installation"
+            return 1
+        fi
+        
+        if [[ ! -f "$new_zshrc" ]]; then
+            err "Downloaded .zshrc file not found in temp"
             return 1
         fi
 
         # Check if existing .zshrc exists - we need to merge local customizations
         if [[ -f "$existing_zshrc" ]]; then
             msg "Existing .zshrc found - checking for local customizations..."
+            msg "  existing_zshrc=$existing_zshrc"
+            msg "  new_zshrc=$new_zshrc"
 
             # Backup existing before replacing
             backup_file ".zshrc" "pre-replace"
 
             # Try to merge local sections
             local temp_merged
+            msg "Calling extract_local_section..."
             temp_merged=$(extract_local_section "$existing_zshrc")
+            msg "  extract_local_section returned: '$temp_merged'"
 
             if [[ -n "$temp_merged" ]] && [[ -s "$temp_merged" ]]; then
                 msg "Found local customizations - merging into new .zshrc..."
                 mv "$temp_merged" "$new_zshrc"
+                msg "  merged file size: $(stat -c%s "$new_zshrc" 2>/dev/null || echo 'unknown')"
             else
                 warn "No local customizations found in existing .zshrc"
                 rm -f "$temp_merged"
             fi
+        else
+            msg "No existing .zshrc found, will install new one"
         fi
+        
+        msg "About to install .zshrc..."
+        msg "  new_zshrc exists: $([[ -f "$new_zshrc" ]] && echo 'yes' || echo 'no')"
+        msg "  new_zshrc size: $(stat -c%s "$new_zshrc" 2>/dev/null || echo 'unknown')"
 
         # ALWAYS install the new dummy .zshrc because it sources .zshrc-profile
         # This is critical - without it, .zshrc-profile is never loaded
-        mv -f "$new_zshrc" "$home/.zshrc"
+        msg "  home/.zshrc target: $home/.zshrc"
+        msg "  performing: mv '$new_zshrc' '$home/.zshrc'"
+        if ! mv -f "$new_zshrc" "$home/.zshrc"; then
+            err "Failed to install .zshrc"
+            ls -la "$new_zshrc" 2>/dev/null || echo "new_zshrc does not exist"
+            ls -la "$home/.zshrc" 2>/dev/null || echo "home/.zshrc does not exist"
+            return 1
+        fi
+        msg "  mv command succeeded"
 
         # Set correct ownership
         if [[ -n "${SUDO_USER:-}" ]]; then
