@@ -639,9 +639,12 @@ download_and_install_dotfiles() {
             return 1
         fi
 
-        # Check if existing .zshrc exists
+        # Check if existing .zshrc exists - we need to merge local customizations
         if [[ -f "$existing_zshrc" ]]; then
             msg "Existing .zshrc found - checking for local customizations..."
+
+            # Backup existing before replacing
+            backup_file ".zshrc" "pre-replace"
 
             # Try to merge local sections
             local temp_merged
@@ -654,18 +657,10 @@ download_and_install_dotfiles() {
                 warn "No local customizations found in existing .zshrc"
                 rm -f "$temp_merged"
             fi
-
-            if ! ask_replace ".zshrc" "replace"; then
-                msg "Keeping existing .zshrc"
-                rm -f "$new_zshrc"
-                return 2
-            fi
-
-            # Backup existing before replacing
-            backup_file ".zshrc" "pre-replace"
         fi
 
-        # Move new .zshrc to home
+        # ALWAYS install the new dummy .zshrc because it sources .zshrc-profile
+        # This is critical - without it, .zshrc-profile is never loaded
         mv -f "$new_zshrc" "$home/.zshrc"
 
         # Set correct ownership
@@ -674,7 +669,7 @@ download_and_install_dotfiles() {
         fi
         chmod 644 "$home/.zshrc"
 
-        msg "Installed .zshrc"
+        msg "Installed .zshrc (sources .zshrc-profile)"
         return 0
     }
 
