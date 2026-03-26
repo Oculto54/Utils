@@ -36,8 +36,11 @@ trap 'die "Script aborted near line ${LINENO:-?}."' ERR
 ask_yes_no() {
   local prompt="$1"
   local default_answer="${2:-y}"
-  local reply
+  local answer=""
   local display
+  local read_fd=0
+  local write_fd=1
+  local opened_fd=""
 
   if [[ "$default_answer" =~ ^[Yy]$ ]]; then
     display="Y/n"
@@ -45,24 +48,42 @@ ask_yes_no() {
     display="y/N"
   fi
 
-  if [[ ! -t 0 ]]; then
-    reply="${default_answer}"
-  else
-    while true; do
-      read -rp "$prompt [$display] " reply
-      reply="${reply:-$default_answer}"
-      case "$reply" in
-        [Yy]*) return 0 ;; 
-        [Nn]*) return 1 ;; 
-        *) warn "Please answer y or n." ;;
+  if ! [[ -t 0 ]]; then
+    if ! exec {opened_fd}<>/dev/tty 2>/dev/null; then
+      warn "No interactive tty detected; defaulting answer to $default_answer."
+      case "$default_answer" in
+        [Yy]*) return 0 ;;
+        *) return 1 ;;
       esac
-    done
+    fi
+    read_fd=$opened_fd
+    write_fd=$opened_fd
   fi
 
-  case "$reply" in
-    [Yy]*) return 0 ;; 
+  printf '%s [%s] ' "$prompt" "$display" >&$write_fd
+  if ! IFS= read -r answer <&$read_fd; then
+    warn "No response received; defaulting to $default_answer."
+    answer="$default_answer"
+  fi
+
+  if [[ -n "${opened_fd}" ]]; then
+    exec {opened_fd}>&-
+  fi
+
+  answer="${answer:-$default_answer}"
+  case "$answer" in
+    [Yy]*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+get_user_shell() {
+  local user="$1"
+  if [[ "$OS_TYPE" == "macos" ]]; then
+    dscl . -read "/Users/$user" UserShell 2>/dev/null | awk '{print $2}'
+  else
+    getent passwd "$user" | cut -d: -f7
+  fi
 }
 
 detect_os() {
@@ -372,7 +393,7 @@ ensure_zsh_shell_setting() {
   [[ -z "$zsh_path" ]] && die "zsh not found"
 
   local current_shell
-  current_shell=$(getent passwd "$REAL_USER" | cut -d: -f7 || true)
+  current_shell=$(get_user_shell "$REAL_USER" || true)
 
   if [[ "$current_shell" == "$zsh_path" ]]; then
     info "$REAL_USER already uses zsh"
@@ -394,7 +415,7 @@ ensure_zsh_shell_setting() {
 
   if [[ "$OS_TYPE" == "linux" ]]; then
     local root_shell
-    root_shell=$(getent passwd root | cut -d: -f7 || true)
+    root_shell=$(get_user_shell root || true)
     if [[ "$root_shell" != "$zsh_path" ]]; then
       if ask_yes_no "Change root shell to zsh?" "y"; then
         if [[ -n "$SUDO_PREFIX" ]]; then
