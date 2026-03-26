@@ -74,7 +74,8 @@ get_real_home() {
 update_packages() {
     msg "Updating packages..."
     if [[ "$OS" == "macos" ]]; then
-        brew update && brew upgrade
+        brew update 2>/dev/null || true
+        brew upgrade 2>/dev/null || true
     else
         $SUDO_PREFIX apt update && $SUDO_PREFIX apt upgrade -y
     fi
@@ -83,7 +84,7 @@ update_packages() {
 install_packages() {
     msg "Installing packages..."
     if [[ "$OS" == "macos" ]]; then
-        brew install git nano zsh curl wget btop
+        brew install git nano zsh curl wget btop 2>/dev/null || true
     else
         $SUDO_PREFIX apt install -y git nano zsh curl wget btop
     fi
