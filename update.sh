@@ -298,6 +298,7 @@ main() {
     msg "Cleaning up..."
     find "$home" -maxdepth 1 -type d -name ".dotfiles_backup_*" -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
     [[ "$OS" == "linux" ]] && $SUDO_PREFIX apt autoremove -y 2>/dev/null && $SUDO_PREFIX apt autoclean 2>/dev/null
+    [[ "$OS" == "macos" ]] && brew cleanup 2>/dev/null || true
 
     msg ""
     msg "========================================"
