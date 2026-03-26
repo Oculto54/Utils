@@ -33,6 +33,36 @@ die() {
 
 trap 'die "Script aborted near line ${LINENO:-?}."' ERR
 
+rerun_with_interactive_shell() {
+  if [[ -n "${UPDATE2_INTERACTIVE:-}" ]]; then
+    return
+  fi
+  if [[ -t 0 ]]; then
+    return
+  fi
+  if ! command -v script >/dev/null 2>&1; then
+    warn 'No interactive terminal detected and /dev/tty is unavailable; prompts will use defaults.'
+    return
+  fi
+
+  local temp_script
+  temp_script=$(mktemp "/tmp/update2.XXXXXX.sh")
+  if ! curl -fsSL "$REPO_URL/update2.sh" -o "$temp_script"; then
+    rm -f "$temp_script"
+    warn 'Unable to re-fetch update2.sh for interactive execution; prompts will use defaults.'
+    return
+  fi
+
+  chmod +x "$temp_script"
+  info 'Re-running update2.sh inside an interactive shell so prompts can read from the terminal.'
+  UPDATE2_INTERACTIVE=1 script -q /dev/null bash "$temp_script" "$@"
+  local script_exit=$?
+  rm -f "$temp_script"
+  exit "$script_exit"
+}
+
+rerun_with_interactive_shell "$@"
+
 ask_yes_no() {
   local prompt="$1"
   local default_answer="${2:-y}"
