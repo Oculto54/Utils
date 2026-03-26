@@ -11,21 +11,21 @@ error() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; }
 
 die() { error "$1"; exit 1; }
 
-if [[ -z "${UPDATE2_INTERACTIVE:-}" && ! -t 0 ]]; then
-  if command -v script >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
-    tmp_script=$(mktemp "/tmp/update2.XXXXXX.sh")
+if [[ -z "${UPDATE_INTERACTIVE:-}" && ! -t 0 ]]; then
+  if ! command -v script >/dev/null 2>&1; then
+    warn "Interactive terminal unavailable; prompts will default"
+  else
+    tmp_script=$(mktemp "/tmp/update.XXXXXX.sh")
     trap 'rm -f "$tmp_script"' EXIT
-    if curl -fsSL "$REPO_URL/update2.sh" -o "$tmp_script"; then
+    if curl -fsSL "$REPO_URL/update.sh" -o "$tmp_script"; then
       chmod +x "$tmp_script"
       info "Re-launching inside a pseudo-tty so prompts can run"
-      UPDATE2_INTERACTIVE=1 script -q /dev/null bash "$tmp_script" "$@"
+      UPDATE_INTERACTIVE=1 script -q /dev/null bash "$tmp_script" "$@"
       rc=$?
       exit "$rc"
     else
-      warn "Unable to download interactive copy, prompts will default"
+      warn "Unable to download interactive copy; prompts will default"
     fi
-  else
-    warn "Interactive terminal unavailable; using default answers"
   fi
 fi
 
