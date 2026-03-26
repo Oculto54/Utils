@@ -168,6 +168,7 @@ create_root_symlinks() {
 
 # Shell Configuration
 change_shell() {
+    [[ "$OS" == "macos" ]] && msg "Skipping shell change on macOS (manual: System Settings > Users & Groups > Advanced Options)" && return 0
     local zsh_path="$(command -v zsh)"
     [[ -z "$zsh_path" ]] && return 1
     msg "Setting zsh as default shell..."
