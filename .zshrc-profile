@@ -104,7 +104,7 @@ alias ....='cd ../../..'
 
 # Update dotfiles from repo
 DOTFILES_ROOT="${DOTFILES_ROOT:-$(cd "$(dirname "${(%):-%N}")" && pwd)}"
-alias update-repo="$DOTFILES_ROOT/update-repo.sh"
+alias update-repo="$DOTFILES_ROOT/.update-repo.sh"
 
 # =============================================================================
 # iTerm2 integration (source if present)
