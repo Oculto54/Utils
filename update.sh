@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
 DOTFILES=(.nanorc .p10k.zsh .zshrc .zshrc-profile .update-repo.sh)
@@ -10,40 +11,6 @@ warn() { printf "\033[0;33m[WARN]\033[0m %s\n" "$1"; }
 error() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; }
 
 die() { error "$1"; exit 1; }
-
-if [[ -z "${UPDATE_INTERACTIVE:-}" && ! -t 0 ]]; then
-  if ! command -v script >/dev/null 2>&1; then
-    warn "Interactive terminal unavailable; prompts will default"
-  else
-    interactive_script=$(mktemp "/tmp/update.XXXXXX.sh")
-    trap 'rm -f "$interactive_script"' EXIT
-    if [[ -f "${BASH_SOURCE[0]:-$0}" ]]; then
-      cp "${BASH_SOURCE[0]:-$0}" "$interactive_script"
-    else
-      if command -v curl >/dev/null 2>&1; then
-        if ! curl -fsSL "$REPO_URL/update.sh" -o "$interactive_script"; then
-          warn "Unable to download interactive copy; prompts will default"
-          rm -f "$interactive_script"
-          unset interactive_script
-        fi
-      else
-        warn "curl unavailable; prompts will default"
-        rm -f "$interactive_script"
-        unset interactive_script
-      fi
-    fi
-
-    if [[ -n "${interactive_script:-}" && -f "$interactive_script" ]]; then
-      chmod +x "$interactive_script"
-      info "Re-launching inside a pseudo-tty so prompts can run"
-      UPDATE_INTERACTIVE=1 script -q /dev/null bash "$interactive_script" "$@"
-      rc=$?
-      exit "$rc"
-    fi
-  fi
-fi
-
-set -euo pipefail
 
 OS_TYPE=""
 SUDO_PREFIX=""
@@ -63,14 +30,22 @@ ask_yes_no() {
   else
     display="y/N"
   fi
-  if [[ -t 0 ]]; then
-    read -rp "$prompt [$display] " answer
-  elif [[ -r /dev/tty ]]; then
-    read -rp "$prompt [$display] " < /dev/tty answer
-  else
-    warn "Non-interactive shell; defaulting answer to $default"
+
+  local prompt_stream="/dev/stdout"
+  if [[ ! -t 1 && -w /dev/tty ]]; then
+    prompt_stream="/dev/tty"
+  fi
+  local input_stream="/dev/stdin"
+  if [[ ! -t 0 && -r /dev/tty ]]; then
+    input_stream="/dev/tty"
+  fi
+
+  printf '%s [%s] ' "$prompt" "$display" >"$prompt_stream"
+  if ! IFS= read -r answer <"$input_stream"; then
+    warn "No response received; defaulting to $default." >&2
     answer="$default"
   fi
+
   answer="${answer:-$default}"
   case "$answer" in
     [Yy]*) return 0 ;; 
@@ -270,7 +245,11 @@ change_shell() {
   local target_shell
   target_shell=$(get_user_shell "$REAL_USER" 2>/dev/null || true)
   target_shell="${target_shell:-${SHELL:-}}"
-  if [[ "$target_shell" != "$zsh_path" ]]; then
+  local target_shell_name
+  target_shell_name="${target_shell##*/}"
+  if [[ "$target_shell" == "$zsh_path" || "$target_shell_name" == "zsh" ]]; then
+    info "$REAL_USER already uses zsh"
+  else
     if ask_yes_no "Change $REAL_USER shell to zsh?" "y"; then
       grep -qx "$zsh_path" /etc/shells || run_root_cmd bash -c "printf '%s\n' '$zsh_path' >> /etc/shells"
       chsh -s "$zsh_path" "$REAL_USER"
