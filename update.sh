@@ -547,6 +547,7 @@ download_and_install_dotfiles() {
         local temp_file="$temp_dir/$file"
 
         if ! download_file "$file" "$temp_file"; then
+            err "Failed to download $file"
             has_errors=1
             continue
         fi
@@ -554,18 +555,24 @@ download_and_install_dotfiles() {
         msg "Downloaded $file"
     done
 
-    # Install .zshrc-profile: ALWAYS (this is the source of truth for shell config)
-    if [[ -f "$temp_dir/.zshrc-profile" ]]; then
-        if [[ -f "$home/.zshrc-profile" ]]; then
-            backup_file ".zshrc-profile" "pre-update"
-        fi
-        mv -f "$temp_dir/.zshrc-profile" "$home/.zshrc-profile"
-        if [[ -n "${SUDO_USER:-}" ]]; then
-            chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc-profile"
-        fi
-        chmod 644 "$home/.zshrc-profile"
-        msg "Installed .zshrc-profile"
+    # CRITICAL: .zshrc-profile MUST be installed (it's sourced by .zshrc)
+    if [[ ! -f "$temp_dir/.zshrc-profile" ]]; then
+        err "CRITICAL: .zshrc-profile download failed! Cannot continue."
+        err "Please check your internet connection and try again."
+        rm -rf "$temp_dir"
+        exit 1
     fi
+
+    # Install .zshrc-profile: ALWAYS (this is the source of truth for shell config)
+    if [[ -f "$home/.zshrc-profile" ]]; then
+        backup_file ".zshrc-profile" "pre-update"
+    fi
+    mv -f "$temp_dir/.zshrc-profile" "$home/.zshrc-profile"
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc-profile"
+    fi
+    chmod 644 "$home/.zshrc-profile"
+    msg "Installed .zshrc-profile"
 
     # Install .nanorc: only if doesn't exist (add include path at line 2)
     if [[ -f "$temp_dir/.nanorc" ]]; then
