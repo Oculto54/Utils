@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+
+if [[ -z "${UPDATE2_RELAUNCHED:-}" && -p /dev/stdin ]]; then
+  tmp_script=$(mktemp "/tmp/update2.XXXXXX.sh")
+  cat > "$tmp_script"
+  chmod +x "$tmp_script"
+  UPDATE2_RELAUNCHED=1
+  env UPDATE2_RELAUNCHED=1 PS1= PROMPT_COMMAND= TERM=dumb script -q /dev/null bash "$tmp_script" "$@"
+  rc=$?
+  rm -f "$tmp_script"
+  exit "$rc"
+fi
+
 set -euo pipefail
 
 readonly REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
@@ -38,6 +50,7 @@ ask_yes_no() {
   local default_answer="${2:-y}"
   local answer=""
   local display
+  local tty_fd
 
   if [[ "$default_answer" =~ ^[Yy]$ ]]; then
     display="Y/n"
@@ -47,17 +60,14 @@ ask_yes_no() {
 
   if [[ -t 0 ]]; then
     read -rp "$prompt [$display] " answer
+  elif [[ -c /dev/tty ]]; then
+    exec {tty_fd}<>/dev/tty
+    printf '%s [%s] ' "$prompt" "$display" >&$tty_fd
+    IFS= read -r answer <&$tty_fd
+    exec {tty_fd}>&-
   else
-    if command -v script >/dev/null 2>&1; then
-      local question
-      question=$(printf '%q' "$prompt [$display] ")
-      local cmd
-      cmd="read -rp $question ans < /dev/tty && printf '%s' \"\$ans\""
-      answer=$(script -q /dev/null bash -c "$cmd" 2>/dev/null || true)
-    else
-      warn "No interactive terminal detected; defaulting answer to $default_answer."
-      answer="$default_answer"
-    fi
+    warn "No interactive terminal detected; defaulting answer to $default_answer."
+    answer="$default_answer"
   fi
 
   answer="${answer:-$default_answer}"
