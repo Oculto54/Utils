@@ -1,134 +1,61 @@
 #!/usr/bin/env zsh
-# =============================================================================
 # Dotfiles Update/Install Script
-# =============================================================================
-# This script can be used for both initial installation and updates.
-# It downloads the latest dotfiles from the repository and merges local
-# customizations from existing .zshrc files.
-#
-# Usage:
-#   ./update.sh          # Interactive mode (asks before replacing files)
-#   ./update.sh --force  # Non-interactive mode (replaces files without asking)
-# =============================================================================
+# Usage: ./update.sh [--force]
 
 set -euo pipefail
 
-# =============================================================================
-# Constants
-# =============================================================================
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m'
-
+# Colors
+readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' CYAN='\033[0;36m' NC='\033[0m'
 readonly REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
-readonly DOTFILES=(".nanorc" ".p10k.zsh" ".zshrc-profile")
-readonly ALL_DOTFILES=(".nanorc" ".p10k.zsh" ".zshrc" ".zshrc-profile")
 
-# =============================================================================
-# Global Variables
-# =============================================================================
+# Global state
 FORCE_MODE=false
 OS=""
-BACKUP_DIR=""
+SUDO_PREFIX=""
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
+# Helpers
+msg()   { printf "%b[INFO]%b %s\n" "$GREEN" "$NC" "$1"; }
+warn()  { printf "%b[WARN]%b %s\n" "$YELLOW" "$NC" "$1"; }
+err()   { printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$1" >&2; }
 
-msg() {
-    printf "%b[INFO]%b %s\n" "$GREEN" "$NC" "$1"
-}
-
-warn() {
-    printf "%b[WARN]%b %s\n" "$YELLOW" "$NC" "$1"
-}
-
-err() {
-    printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$1" >&2
-}
-
+# Ask user yes/no
 ask() {
-    local question="$1"
-    local default="${2:-y}"
-    local yn
-
-    if [[ "$FORCE_MODE" == true ]]; then
-        return 0
-    fi
-
-    while true; do
-        printf "%b[ASK]%b %s [y/n]: " "$CYAN" "$NC" "$question"
-        read yn
-        case $yn in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-            "") [[ "$default" == "y" ]] && return 0 || return 1 ;;
-            *) msg "Please answer yes or no." ;;
-        esac
-    done
-}
-
-ask_replace() {
-    local file="$1"
-    local action="${2:-replace}"
-
-    if [[ "$FORCE_MODE" == true ]]; then
-        msg "Force mode: replacing $file"
-        return 0
-    fi
-
-    # Check if stdin is a TTY (interactive mode)
-    if [[ ! -t 0 ]]; then
-        # Non-interactive (piped/sudo), default to replace
-        warn "Non-interactive mode detected, replacing $file"
-        return 0
-    fi
-
-    msg "File exists: $file"
-    printf "  [R]eplace | [K]eep existing | [B]ackup and replace: "
-    local choice
-    read choice
-
-    case "${choice:0:1}" in
-        r|R) return 0 ;;
-        k|K) return 2 ;;
-        b|B) backup_file "$file" "manual"; return 0 ;;
-        *) warn "Invalid choice, replacing $file"; return 0 ;;
+    [[ "$FORCE_MODE" == true ]] && return 0
+    [[ ! -t 0 ]] && return 0
+    local question="$1" default="${2:-y}" yn
+    printf "%b[ASK]%b %s [y/n]: " "$CYAN" "$NC" "$question"
+    read yn
+    case $yn in
+        [Yy]*) return 0 ;;
+        [Nn]*) return 1 ;;
+        "") [[ "$default" == "y" ]] && return 0 || return 1 ;;
+        *) msg "Please answer yes or no." ;;
     esac
 }
 
-# =============================================================================
 # OS Detection
-# =============================================================================
-
 detect_os() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         OS="macos"
-        msg "Detected OS: macOS"
     elif [[ "$OSTYPE" == "linux-gnu"* ]] || [[ -f /etc/debian_version ]]; then
         OS="linux"
-        msg "Detected OS: Linux"
     else
-        err "Unsupported operating system: $OSTYPE"
+        err "Unsupported OS: $OSTYPE"
         exit 1
     fi
+    msg "Detected OS: $OS"
 }
 
-# =============================================================================
-# User Detection
-# =============================================================================
-
-get_real_user() {
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        echo "$SUDO_USER"
+# Init sudo prefix
+init_sudo() {
+    if [[ "$OS" == "macos" ]] || [[ $EUID -eq 0 ]]; then
+        SUDO_PREFIX=""
     else
-        whoami
+        SUDO_PREFIX="sudo"
     fi
 }
 
+# Get user home directory
 get_user_home() {
     local user="$1"
     if [[ "$OS" == "macos" ]]; then
@@ -139,515 +66,153 @@ get_user_home() {
 }
 
 get_real_home() {
-    local user
-    user=$(get_real_user)
+    local user="${SUDO_USER:-$(whoami)}"
     get_user_home "$user"
 }
 
-get_user_shell() {
-    local user="$1"
-    if [[ "$OS" == "macos" ]]; then
-        dscl . -read /Users/"$user" UserShell 2>/dev/null | awk '{print $2}'
-    else
-        getent passwd "$user" | cut -d: -f7
-    fi
-}
-
-# Check if we can run privileged commands (sudo available or running as root)
-can_sudo() {
-    if [[ $EUID -eq 0 ]]; then
-        return 0  # Already root
-    fi
-    if [[ "$OS" == "macos" ]]; then
-        # On macOS, we don't need sudo for brew
-        return 0
-    fi
-    # On Linux, check if sudo is available
-    command -v sudo &>/dev/null && sudo -n true 2>/dev/null
-}
-
-# Get the sudo prefix for commands
-get_sudo_prefix() {
-    if [[ "$OS" == "macos" ]]; then
-        echo ""  # No sudo needed for brew
-    elif [[ $EUID -eq 0 ]]; then
-        echo ""  # Already root
-    else
-        echo "sudo"  # Need sudo
-    fi
-}
-
-# =============================================================================
-# Homebrew Installation (macOS only)
-# =============================================================================
-
-install_homebrew() {
-    if [[ "$OS" != "macos" ]]; then
-        return 0
-    fi
-
-    if command -v brew &>/dev/null; then
-        msg "Homebrew already installed"
-        return 0
-    fi
-
-    msg "Installing Homebrew..."
-    export HOMEBREW_NO_INSTALL_FROM_API=1
-    export HOMEBREW_NO_AUTO_UPDATE=1
-
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        su - "$SUDO_USER" -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-    else
-        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    fi
-
-    # Add to PATH for this session
-    if [[ -d /opt/homebrew/bin ]]; then
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [[ -d /usr/local/bin ]]; then
-        eval "$(/usr/local/bin/brew shellenv)"
-    fi
-
-    msg "Homebrew installed successfully"
-}
-
-# =============================================================================
 # Package Management
-# =============================================================================
-
 update_packages() {
-    msg "Updating package lists and upgrading packages..."
-
-    local sudo_prefix
-    sudo_prefix=$(get_sudo_prefix)
-
+    msg "Updating packages..."
     if [[ "$OS" == "macos" ]]; then
-        if command -v brew &>/dev/null; then
-            if [[ -n "${SUDO_USER:-}" ]]; then
-                su - "$SUDO_USER" -c "brew update && brew upgrade"
-            else
-                brew update && brew upgrade
-            fi
-        fi
+        brew update && brew upgrade
     else
-        $sudo_prefix apt update
-        $sudo_prefix apt upgrade -y
+        $SUDO_PREFIX apt update && $SUDO_PREFIX apt upgrade -y
     fi
-
-    msg "Package update complete"
 }
 
 install_packages() {
-    msg "Installing required packages: git, nano, zsh, curl, wget, btop..."
-
-    local sudo_prefix
-    sudo_prefix=$(get_sudo_prefix)
-
+    msg "Installing packages..."
     if [[ "$OS" == "macos" ]]; then
-        if [[ -n "${SUDO_USER:-}" ]]; then
-            su - "$SUDO_USER" -c "brew install git nano zsh curl wget btop"
-        else
-            brew install git nano zsh curl wget btop
-        fi
+        brew install git nano zsh curl wget btop
     else
-        $sudo_prefix apt install -y git nano zsh curl wget btop
+        $SUDO_PREFIX apt install -y git nano zsh curl wget btop
     fi
-
-    msg "Packages installed successfully"
 }
 
-# =============================================================================
+install_homebrew() {
+    [[ "$OS" != "macos" ]] && return 0
+    command -v brew &>/dev/null && return 0
+    msg "Installing Homebrew..."
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    [[ -d /opt/homebrew/bin ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
+}
+
 # File Operations
-# =============================================================================
-
 backup_file() {
-    local file="$1"
-    local reason="${2:-auto}"
-    local home
-    home=$(get_real_home)
-
-    if [[ ! -f "$home/$file" ]]; then
-        return 0
-    fi
-
+    local file="$1" home="$(get_real_home)"
+    [[ ! -f "$home/$file" ]] && return 0
     local backup_path="${BACKUP_DIR}/${file}_$(date +%Y%m%d_%H%M%S)"
-
-    # Create parent directory if needed
     mkdir -p "$(dirname "$backup_path")"
-
     cp -p "$home/$file" "$backup_path"
-    msg "Backed up $file -> $backup_path (reason: $reason)"
-
-    # Fix ownership
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$backup_path"
-    fi
+    msg "Backed up $file"
+    [[ -n "${SUDO_USER:-}" ]] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$backup_path"
 }
 
-backup_dotfiles() {
-    local home
-    home=$(get_real_home)
-
-    msg "Backing up existing dotfiles..."
-
-    for file in $ALL_DOTFILES; do
-        if [[ -f "$home/$file" ]]; then
-            backup_file "$file" "pre-update"
-        fi
-    done
-
-    msg "Backup complete"
+install_file() {
+    local src="$1" dest="$2" home="$(get_real_home)"
+    mkdir -p "$(dirname "$home/$dest")"
+    mv -f "$src" "$home/$dest"
+    chmod 644 "$home/$dest"
+    [[ -n "${SUDO_USER:-}" ]] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/$dest"
+    msg "Installed $dest"
 }
 
 download_file() {
-    local filename="$1"
-    local output="$2"
-    local url="${REPO_URL}/${filename}"
-
-    msg "Downloading $filename..."
-
+    local url="${REPO_URL}/${1}" output="$2"
     if command -v curl &>/dev/null; then
-        if ! curl -fsSL --max-time 30 "$url" -o "$output"; then
-            err "Failed to download $filename from $url"
-            return 1
-        fi
+        curl -fsSL --max-time 30 "$url" -o "$output" || return 1
     elif command -v wget &>/dev/null; then
-        if ! wget -q --timeout=30 "$url" -O "$output"; then
-            err "Failed to download $filename from $url"
-            return 1
-        fi
+        wget -q --timeout=30 "$url" -O "$output" || return 1
     else
-        err "Neither curl nor wget is available"
+        err "Neither curl nor wget available"
         return 1
     fi
-
-    if [[ ! -s "$output" ]]; then
-        err "Downloaded file $filename is empty"
-        rm -f "$output"
-        return 1
-    fi
-
-    msg "Downloaded $filename successfully"
+    [[ ! -s "$output" ]] && return 1
     return 0
 }
 
-# =============================================================================
-# =============================================================================
-# .nanorc Setup - Add include path at line 2
-# =============================================================================
-
+# .nanorc Setup
 setup_nanorc_include() {
-    local home
-    home=$(get_real_home)
-    local nanorc_file="$home/.nanorc"
-    local temp_file
-    temp_file=$(mktemp)
+    local home="$(get_real_home)" nanorc_file="$home/.nanorc" syntax_include=""
 
-    # Determine the correct syntax directory based on OS
-    local syntax_include=""
     if [[ "$OS" == "macos" ]]; then
-        if command -v brew &>/dev/null; then
-            local brew_prefix
-            brew_prefix=$(brew --prefix)
-            if [[ -d "$brew_prefix/share/nano" ]]; then
-                syntax_include="include \"$brew_prefix/share/nano/*.nanorc\""
-            fi
-        fi
-        if [[ -z "$syntax_include" ]]; then
-            for dir in /opt/homebrew/share/nano /usr/local/share/nano /opt/local/share/nano; do
-                if [[ -d "$dir" ]]; then
-                    syntax_include="include \"$dir/*.nanorc\""
-                    break
-                fi
-            done
-        fi
+        local brew_prefix
+        brew_prefix=$(brew --prefix 2>/dev/null)
+        [[ -d "$brew_prefix/share/nano" ]] && syntax_include="include \"$brew_prefix/share/nano/*.nanorc\""
+        [[ -z "$syntax_include" ]] && [[ -d /opt/homebrew/share/nano ]] && syntax_include="include \"/opt/homebrew/share/nano/*.nanorc\""
+        [[ -z "$syntax_include" ]] && [[ -d /usr/local/share/nano ]] && syntax_include="include \"/usr/local/share/nano/*.nanorc\""
     else
-        if [[ -d /usr/share/nano ]]; then
-            syntax_include="include \"/usr/share/nano/*.nanorc\""
-        fi
+        [[ -d /usr/share/nano ]] && syntax_include="include \"/usr/share/nano/*.nanorc\""
     fi
 
-    # Insert the include at line 2
     if [[ -n "$syntax_include" ]]; then
-        {
-            head -n 1 "$nanorc_file" 2>/dev/null || echo ""
-            echo "$syntax_include"
-            echo ""
-            tail -n +2 "$nanorc_file" 2>/dev/null || true
-        } > "$temp_file"
-        mv -f "$temp_file" "$nanorc_file"
-        msg "Added nano include at line 2: $syntax_include"
-    else
-        msg "No nano syntax directory found, skipping include"
-        rm -f "$temp_file"
+        local tmp=$(mktemp)
+        { head -n 1 "$nanorc_file" 2>/dev/null; echo "$syntax_include"; echo ""; tail -n +2 "$nanorc_file" 2>/dev/null; } > "$tmp"
+        mv -f "$tmp" "$nanorc_file"
+        msg "Added nano include: $syntax_include"
     fi
 }
 
-# =============================================================================
 # Root Symlinks
-# =============================================================================
-
 create_root_symlinks() {
-    # Skip if not running under sudo
-    if [[ -z "${SUDO_USER:-}" ]]; then
-        msg "Not running under sudo, skipping root symlinks"
-        return 0
-    fi
-
-    # Skip if /root doesn't exist
-    if [[ ! -d "/root" ]]; then
-        msg "/root directory not found, skipping root symlinks"
-        return 0
-    fi
-
-    # Skip if running as root user
-    if [[ "$SUDO_USER" == "root" ]]; then
-        msg "Running as root user, skipping root symlinks"
-        return 0
-    fi
-
-    local user_home
-    user_home=$(get_real_home)
-
+    [[ -z "${SUDO_USER:-}" ]] && return 0
+    [[ ! -d /root ]] && return 0
+    [[ "$SUDO_USER" == "root" ]] && return 0
+    local home="$(get_real_home)"
     msg "Creating root symlinks..."
-
-    local linked=0
-    for file in $ALL_DOTFILES; do
-        if [[ -f "$user_home/$file" ]]; then
-            ln -sf "$user_home/$file" "/root/$file"
-            msg "Created symlink: /root/$file -> $user_home/$file"
-            linked=$((linked + 1))
-        else
-            msg "Skipped /root/$file (source not found: $user_home/$file)"
-        fi
+    for file in .nanorc .p10k.zsh .zshrc .zshrc-profile; do
+        [[ -f "$home/$file" ]] && ln -sf "$home/$file" "/root/$file"
     done
-    
-    # Special check for .zshrc-profile - it's critical for .zshrc to work
-    if [[ ! -f "/root/.zshrc-profile" ]]; then
-        if [[ -f "$user_home/.zshrc-profile" ]]; then
-            ln -sf "$user_home/.zshrc-profile" "/root/.zshrc-profile"
-            msg "Created symlink: /root/.zshrc-profile -> $user_home/.zshrc-profile"
-        else
-            warn ".zshrc-profile not found in $user_home, root shell may not work correctly"
-        fi
-    fi
-
-    if [[ $linked -gt 0 ]]; then
-        msg "Created $linked root symlinks"
-    else
-        warn "No root symlinks created (files may be missing)"
-    fi
 }
 
-# =============================================================================
 # Shell Configuration
-# =============================================================================
-
 change_shell() {
-    local zsh_path
-    zsh_path=$(command -v zsh)
+    local zsh_path="$(command -v zsh)"
+    [[ -z "$zsh_path" ]] && return 1
+    msg "Setting zsh as default shell..."
 
-    if [[ -z "$zsh_path" ]]; then
-        err "zsh not found in PATH"
-        return 1
-    fi
-
-    local sudo_prefix
-    sudo_prefix=$(get_sudo_prefix)
-
-    msg "Changing default shell to zsh ($zsh_path)..."
-
-    # Add zsh to /etc/shells if not present
+    # Add to /etc/shells
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
-        $sudo_prefix sh -c "echo '$zsh_path' >> /etc/shells"
-        msg "Added $zsh_path to /etc/shells"
+        $SUDO_PREFIX tee -a /etc/shells <<< "$zsh_path" > /dev/null
     fi
 
-    # Change shell for the real user
-    local real_user
-    real_user=$(get_real_user)
+    # Change for user
+    local user="${SUDO_USER:-$(whoami)}"
+    [[ "$user" != "root" ]] && $SUDO_PREFIX chsh -s "$zsh_path" "$user" 2>/dev/null
 
-    if [[ "$real_user" != "root" ]]; then
-        local current_shell
-        current_shell=$(get_user_shell "$real_user")
-        if [[ "$current_shell" != "$zsh_path" ]]; then
-            $sudo_prefix chsh -s "$zsh_path" "$real_user"
-            msg "Changed shell for $real_user to zsh"
-        else
-            msg "Shell for $real_user is already zsh"
-        fi
-    fi
-
-    # Change shell for root (only on Linux)
-    if [[ "$OS" == "linux" ]]; then
-        local root_shell
-        root_shell=$(get_user_shell root)
-        if [[ "$root_shell" != "$zsh_path" ]]; then
-            $sudo_prefix chsh -s "$zsh_path" root
-            msg "Changed shell for root to zsh"
-        else
-            msg "Shell for root is already zsh"
-        fi
-    fi
+    # Change for root (Linux only)
+    [[ "$OS" == "linux" ]] && $SUDO_PREFIX chsh -s "$zsh_path" root 2>/dev/null
 }
 
-# =============================================================================
 # Verification
-# =============================================================================
-
-verify_installation() {
-    local home
-    home=$(get_real_home)
-
-    msg "Verifying installation..."
-
-    local errors=0
-
-    # Check packages
+verify() {
+    local errors=0 home="$(get_real_home)"
+    msg "Verifying..."
     for pkg in git nano zsh curl wget btop; do
         if command -v "$pkg" &>/dev/null; then
-            msg "  [OK] $pkg installed"
+            msg "  [OK] $pkg"
         else
-            err "  [FAIL] $pkg not found"
+            err "  [FAIL] $pkg"
             errors=$((errors + 1))
         fi
     done
-
-    # Check dotfiles
-    for file in $ALL_DOTFILES; do
+    for file in .nanorc .p10k.zsh .zshrc .zshrc-profile; do
         if [[ -f "$home/$file" ]]; then
-            msg "  [OK] $file installed"
+            msg "  [OK] $file"
         else
-            warn "  [SKIP] $file not found (optional)"
+            warn "  [MISS] $file"
         fi
     done
-
-    if [[ $errors -eq 0 ]]; then
-        msg "All verifications passed!"
-    else
-        warn "Verification completed with $errors errors"
-    fi
+    [[ $errors -eq 0 ]] && msg "All verifications passed!" || warn "Verification completed with $errors errors"
 }
 
-# =============================================================================
-# Main Download and Install Logic
-# =============================================================================
-
-download_and_install_dotfiles() {
-    local home
-    home=$(get_real_home)
-    local temp_dir
-    temp_dir=$(mktemp -d)
-    local has_errors=0
-
-    msg "Downloading dotfiles from repository..."
-
-    # Download all files first
-    for file in $DOTFILES; do
-        local temp_file="$temp_dir/$file"
-
-        if ! download_file "$file" "$temp_file"; then
-            err "Failed to download $file"
-            has_errors=1
-            continue
-        fi
-
-        msg "Downloaded $file"
-    done
-
-    # CRITICAL: .zshrc-profile MUST be installed (it's sourced by .zshrc)
-    if [[ ! -f "$temp_dir/.zshrc-profile" ]]; then
-        err "CRITICAL: .zshrc-profile download failed! Cannot continue."
-        err "Please check your internet connection and try again."
-        rm -rf "$temp_dir"
-        exit 1
-    fi
-
-    # Install .zshrc-profile: ALWAYS (this is the source of truth for shell config)
-    if [[ -f "$home/.zshrc-profile" ]]; then
-        backup_file ".zshrc-profile" "pre-update"
-    fi
-    mv -f "$temp_dir/.zshrc-profile" "$home/.zshrc-profile"
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc-profile"
-    fi
-    chmod 644 "$home/.zshrc-profile"
-    msg "Installed .zshrc-profile"
-
-    # Install .nanorc: only if doesn't exist (add include path at line 2)
-    if [[ -f "$temp_dir/.nanorc" ]]; then
-        if [[ ! -f "$home/.nanorc" ]]; then
-            mv -f "$temp_dir/.nanorc" "$home/.nanorc"
-            if [[ -n "${SUDO_USER:-}" ]]; then
-                chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.nanorc"
-            fi
-            chmod 644 "$home/.nanorc"
-            msg "Installed .nanorc"
-            # Add the nano include path at line 2
-            setup_nanorc_include
-        else
-            msg "Keeping existing .nanorc"
-            rm -f "$temp_dir/.nanorc"
-        fi
-    fi
-
-    # Install .p10k.zsh: only if doesn't exist
-    if [[ -f "$temp_dir/.p10k.zsh" ]]; then
-        if [[ ! -f "$home/.p10k.zsh" ]]; then
-            mv -f "$temp_dir/.p10k.zsh" "$home/.p10k.zsh"
-            if [[ -n "${SUDO_USER:-}" ]]; then
-                chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.p10k.zsh"
-            fi
-            chmod 644 "$home/.p10k.zsh"
-            msg "Installed .p10k.zsh"
-        else
-            msg "Keeping existing .p10k.zsh"
-            rm -f "$temp_dir/.p10k.zsh"
-        fi
-    fi
-
-    # Install .zshrc: only if doesn't exist (dummy one that sources .zshrc-profile)
-    if [[ ! -f "$home/.zshrc" ]]; then
-        if download_file ".zshrc" "$temp_dir/.zshrc"; then
-            mv -f "$temp_dir/.zshrc" "$home/.zshrc"
-            if [[ -n "${SUDO_USER:-}" ]]; then
-                chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$home/.zshrc"
-            fi
-            chmod 644 "$home/.zshrc"
-            msg "Installed .zshrc (sources .zshrc-profile)"
-        fi
-    else
-        msg "Keeping existing .zshrc"
-    fi
-
-    # Cleanup temp directory
-    rm -rf "$temp_dir"
-
-    if [[ $has_errors -eq 1 ]]; then
-        warn "Some files failed to download"
-    fi
-}
-
-# =============================================================================
 # Main
-# =============================================================================
-
 main() {
-    # Parse arguments
+    # Parse args
     for arg in "$@"; do
         case $arg in
-            --force|-f)
-                FORCE_MODE=true
-                msg "Running in force mode (no prompts)"
-                ;;
-            --help|-h)
-                echo "Usage: $0 [OPTIONS]"
-                echo "  --force, -f    Run without prompts (auto-answer yes)"
-                echo "  --help, -h     Show this help message"
-                exit 0
-                ;;
-            *)
-                ;;
+            --force|-f) FORCE_MODE=true; msg "Force mode enabled" ;;
+            --help|-h)  echo "Usage: $0 [--force]"; exit 0 ;;
         esac
     done
 
@@ -655,83 +220,90 @@ main() {
     msg "Dotfiles Update/Install Script"
     msg "========================================"
 
-    # Step 1: Detect OS
     detect_os
+    [[ "$OS" == "linux" && $EUID -ne 0 ]] && { err "Linux requires sudo. Run: sudo $0"; exit 1; }
+    init_sudo
 
-    # Check sudo access on Linux
-    if [[ "$OS" == "linux" ]] && ! can_sudo; then
-        err "This script requires sudo privileges on Linux."
-        err "Please run with: sudo $0"
+    local home="$(get_real_home)"
+    local user="${SUDO_USER:-$(whoami)}"
+    msg "Running as: $user | Home: $home"
+
+    # Backup
+    BACKUP_DIR="$home/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$BACKUP_DIR"
+    for f in .nanorc .p10k.zsh .zshrc .zshrc-profile; do
+        [[ -f "$home/$f" ]] && backup_file "$f"
+    done
+
+    # Install packages
+    install_homebrew
+    update_packages
+    install_packages
+
+    # Download files
+    local tmpdir="$(mktemp -d)"
+    local failed=0
+
+    msg "Downloading dotfiles..."
+    for file in .nanorc .p10k.zsh .zshrc-profile; do
+        download_file "$file" "$tmpdir/$file" || { err "Failed to download $file"; failed=1; }
+    done
+
+    # CRITICAL: .zshrc-profile must exist
+    if [[ ! -f "$tmpdir/.zshrc-profile" ]]; then
+        err "CRITICAL: .zshrc-profile download failed!"
+        rm -rf "$tmpdir"
         exit 1
     fi
 
-    # Step 2: Detect user context
-    local real_user
-    real_user=$(get_real_user)
-    local real_home
-    real_home=$(get_real_home)
+    # Install .zshrc-profile (always)
+    install_file "$tmpdir/.zshrc-profile" ".zshrc-profile"
 
-    msg "Running as user: $real_user"
-    msg "Home directory: $real_home"
-
-    if [[ $EUID -eq 0 ]]; then
-        msg "Running as root"
+    # Install .nanorc (only if missing)
+    if [[ -f "$tmpdir/.nanorc" ]]; then
+        if [[ ! -f "$home/.nanorc" ]]; then
+            install_file "$tmpdir/.nanorc" ".nanorc"
+            setup_nanorc_include
+        else
+            msg "Keeping existing .nanorc"
+            rm -f "$tmpdir/.nanorc"
+        fi
     fi
 
-    # Step 3: Create backup directory
-    BACKUP_DIR="$real_home/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
+    # Install .p10k.zsh (only if missing)
+    if [[ -f "$tmpdir/.p10k.zsh" ]]; then
+        if [[ ! -f "$home/.p10k.zsh" ]]; then
+            install_file "$tmpdir/.p10k.zsh" ".p10k.zsh"
+        else
+            msg "Keeping existing .p10k.zsh"
+            rm -f "$tmpdir/.p10k.zsh"
+        fi
+    fi
 
-    # Step 4: Backup existing dotfiles
-    backup_dotfiles
+    # Install .zshrc (only if missing)
+    if [[ ! -f "$home/.zshrc" ]]; then
+        download_file ".zshrc" "$tmpdir/.zshrc" && install_file "$tmpdir/.zshrc" ".zshrc"
+    else
+        msg "Keeping existing .zshrc"
+    fi
 
-    # Step 5: Install Homebrew (macOS only)
-    install_homebrew
+    rm -rf "$tmpdir"
 
-    # Step 6: Update packages
-    update_packages
-
-    # Step 7: Install packages
-    install_packages
-
-    # Step 8: Download and install dotfiles
-    download_and_install_dotfiles
-
-    # Step 9: Create root symlinks
     create_root_symlinks
-
-    # Step 11: Change shell to zsh
-    if ask "Change default shell to zsh?" "y"; then
-        change_shell
-    fi
-
-    # Step 12: Verification
-    verify_installation
+    ask "Change default shell to zsh?" && change_shell
+    verify
 
     # Cleanup
-    msg "Cleaning up backup files older than 7 days..."
-    find "$real_home" -maxdepth 1 -type d -name ".dotfiles_backup_*" -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
-
-    # Linux apt cleanup
-    if [[ "$OS" == "linux" ]]; then
-        local sudo_prefix
-        sudo_prefix=$(get_sudo_prefix)
-        msg "Running apt autoremove and autoclean..."
-        $sudo_prefix apt autoremove -y 2>/dev/null || true
-        $sudo_prefix apt autoclean 2>/dev/null || true
-    fi
+    msg "Cleaning up..."
+    find "$home" -maxdepth 1 -type d -name ".dotfiles_backup_*" -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
+    [[ "$OS" == "linux" ]] && $SUDO_PREFIX apt autoremove -y 2>/dev/null && $SUDO_PREFIX apt autoclean 2>/dev/null
 
     msg ""
     msg "========================================"
     msg "Update complete!"
+    msg "Backup: $BACKUP_DIR"
+    msg "Restart shell: exec zsh"
     msg "========================================"
-    msg ""
-    msg "Backup directory: $BACKUP_DIR"
-    msg ""
-    msg "NOTE: You may need to restart your shell or"
-    msg "run 'exec zsh' to apply all changes."
-    msg ""
 }
 
-# Run main
 main "$@"
