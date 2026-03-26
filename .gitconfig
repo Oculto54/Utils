@@ -1,0 +1,5 @@
+[user]
+	name = Oculto54
+	email = 133160205+Oculto54@users.noreply.github.com
+[credential]
+	helper = !gh auth git-credential --hostname github.com --user Oculto54
