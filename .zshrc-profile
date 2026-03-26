@@ -103,7 +103,8 @@ alias ....='cd ../../..'
 #alias -- -='cd -'
 
 # Update dotfiles from repo
-alias update-repo='curl -fsSL https://raw.githubusercontent.com/Oculto54/Utils/main/update.sh | zsh'
+DOTFILES_ROOT="${DOTFILES_ROOT:-$(cd "$(dirname "${(%):-%N}")" && pwd)}"
+alias update-repo="$DOTFILES_ROOT/update-repo.sh"
 
 # =============================================================================
 # iTerm2 integration (source if present)
