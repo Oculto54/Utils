@@ -72,30 +72,24 @@ get_real_home() {
 
 # Package Management
 update_packages() {
-    msg "Updating packages..."
-    if [[ "$OS" == "macos" ]]; then
-        brew update 2>/dev/null || true
-        brew upgrade 2>/dev/null || true
-    else
-        $SUDO_PREFIX apt update && $SUDO_PREFIX apt upgrade -y
-    fi
+    msg "Updating packages (skipped - using existing packages)..."
+    # Skip update on macOS as it can be slow
+    [[ "$OS" == "macos" ]] && return 0
+    $SUDO_PREFIX apt update && $SUDO_PREFIX apt upgrade -y
 }
 
 install_packages() {
-    msg "Installing packages..."
-    if [[ "$OS" == "macos" ]]; then
-        brew install git nano zsh curl wget btop 2>/dev/null || true
-    else
-        $SUDO_PREFIX apt install -y git nano zsh curl wget btop
-    fi
+    msg "Installing packages (skipped - using existing packages)..."
+    # Packages should already be installed, skip to save time
+    [[ "$OS" == "macos" ]] && return 0
+    $SUDO_PREFIX apt install -y git nano zsh curl wget btop
 }
 
 install_homebrew() {
     [[ "$OS" != "macos" ]] && return 0
     command -v brew &>/dev/null && return 0
-    msg "Installing Homebrew..."
+    msg "Homebrew not found, installing..."
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    [[ -d /opt/homebrew/bin ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
 }
 
 # File Operations
