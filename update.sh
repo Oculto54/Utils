@@ -15,16 +15,14 @@ if [[ -z "${UPDATE_INTERACTIVE:-}" && ! -t 0 ]]; then
   if ! command -v script >/dev/null 2>&1; then
     warn "Interactive terminal unavailable; prompts will default"
   else
-    tmp_script=$(mktemp "/tmp/update.XXXXXX.sh")
-    trap 'rm -f "$tmp_script"' EXIT
-    if curl -fsSL "$REPO_URL/update.sh" -o "$tmp_script"; then
-      chmod +x "$tmp_script"
+    local script_path="${BASH_SOURCE[0]:-$0}"
+    if [[ "$script_path" == "-" ]] || [[ ! -f "$script_path" ]]; then
+      warn "Unable to determine script file for interactive relaunch; prompts will default"
+    else
       info "Re-launching inside a pseudo-tty so prompts can run"
-      UPDATE_INTERACTIVE=1 script -q /dev/null bash "$tmp_script" "$@"
+      UPDATE_INTERACTIVE=1 script -q /dev/null bash "$script_path" "$@"
       rc=$?
       exit "$rc"
-    else
-      warn "Unable to download interactive copy; prompts will default"
     fi
   fi
 fi
