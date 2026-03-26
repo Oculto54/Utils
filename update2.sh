@@ -33,44 +33,11 @@ die() {
 
 trap 'die "Script aborted near line ${LINENO:-?}."' ERR
 
-rerun_with_interactive_shell() {
-  if [[ -n "${UPDATE2_INTERACTIVE:-}" ]]; then
-    return
-  fi
-  if [[ -t 0 ]]; then
-    return
-  fi
-  if ! command -v script >/dev/null 2>&1; then
-    warn 'No interactive terminal detected and /dev/tty is unavailable; prompts will use defaults.'
-    return
-  fi
-
-  local temp_script
-  temp_script=$(mktemp "/tmp/update2.XXXXXX.sh")
-  if ! curl -fsSL "$REPO_URL/update2.sh" -o "$temp_script"; then
-    rm -f "$temp_script"
-    warn 'Unable to re-fetch update2.sh for interactive execution; prompts will use defaults.'
-    return
-  fi
-
-  chmod +x "$temp_script"
-  info 'Re-running update2.sh inside an interactive shell so prompts can read from the terminal.'
-  UPDATE2_INTERACTIVE=1 script -q /dev/null bash "$temp_script" "$@"
-  local script_exit=$?
-  rm -f "$temp_script"
-  exit "$script_exit"
-}
-
-rerun_with_interactive_shell "$@"
-
 ask_yes_no() {
   local prompt="$1"
   local default_answer="${2:-y}"
   local answer=""
   local display
-  local read_fd=0
-  local write_fd=1
-  local opened_fd=""
 
   if [[ "$default_answer" =~ ^[Yy]$ ]]; then
     display="Y/n"
@@ -78,26 +45,19 @@ ask_yes_no() {
     display="y/N"
   fi
 
-  if ! [[ -t 0 ]]; then
-    if ! exec {opened_fd}<>/dev/tty 2>/dev/null; then
-      warn "No interactive tty detected; defaulting answer to $default_answer."
-      case "$default_answer" in
-        [Yy]*) return 0 ;;
-        *) return 1 ;;
-      esac
+  if [[ -t 0 ]]; then
+    read -rp "$prompt [$display] " answer
+  else
+    if command -v script >/dev/null 2>&1; then
+      local question
+      question=$(printf '%q' "$prompt [$display] ")
+      local cmd
+      cmd="read -rp $question ans < /dev/tty && printf '%s' \"\$ans\""
+      answer=$(script -q /dev/null bash -c "$cmd" 2>/dev/null || true)
+    else
+      warn "No interactive terminal detected; defaulting answer to $default_answer."
+      answer="$default_answer"
     fi
-    read_fd=$opened_fd
-    write_fd=$opened_fd
-  fi
-
-  printf '%s [%s] ' "$prompt" "$display" >&$write_fd
-  if ! IFS= read -r answer <&$read_fd; then
-    warn "No response received; defaulting to $default_answer."
-    answer="$default_answer"
-  fi
-
-  if [[ -n "${opened_fd}" ]]; then
-    exec {opened_fd}>&-
   fi
 
   answer="${answer:-$default_answer}"
