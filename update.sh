@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
-DOTFILES=(.nanorc .p10k.zsh .zshrc .zshrc-profile)
+DOTFILES=(.nanorc .p10k.zsh .zshrc .zshrc-profile .update-repo.sh)
 BREW_PKGS=(git nano zsh curl wget btop)
 APT_PKGS=(git nano zsh curl wget btop)
 
@@ -79,6 +79,15 @@ resolve_user_home() {
     dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}'
   else
     getent passwd "$user" | cut -d: -f6
+  fi
+}
+
+get_user_shell() {
+  local user="$1"
+  if [[ "$OS_TYPE" == "macos" ]]; then
+    dscl . -read "/Users/$user" UserShell 2>/dev/null | awk '{print $2}'
+  else
+    getent passwd "$user" | cut -d: -f7
   fi
 }
 
@@ -165,7 +174,11 @@ backup_dotfiles() {
 install_file() {
   local file="$1"
   cp -f "$TMP_DIR/$file" "$HOME_DIR/$file"
-  chmod 644 "$HOME_DIR/$file"
+  if [[ "$file" == ".update-repo.sh" ]]; then
+    chmod 755 "$HOME_DIR/$file"
+  else
+    chmod 644 "$HOME_DIR/$file"
+  fi
   [[ -n "${SUDO_USER:-}" ]] && chown "$REAL_USER:$(id -gn "$REAL_USER")" "$HOME_DIR/$file" 2>/dev/null || true
   info "Installed $file"
 }
@@ -187,7 +200,7 @@ ensure_nanorc_include() {
 
 dotfile_mode_setup() {
   case "$1" in
-    .zshrc-profile) install_file "$1" ;; 
+    .zshrc-profile|.update-repo.sh) install_file "$1" ;; 
     *)
       if [[ -f "$HOME_DIR/$1" ]]; then
         if ask_yes_no "Replace existing $1?" "n"; then
@@ -241,7 +254,8 @@ change_shell() {
   zsh_path=$(command -v zsh || true)
   [[ -z "$zsh_path" ]] && die "zsh not installed"
   local target_shell
-  target_shell=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f7 || true)
+  target_shell=$(get_user_shell "$REAL_USER" 2>/dev/null || true)
+  target_shell="${target_shell:-${SHELL:-}}"
   if [[ "$target_shell" != "$zsh_path" ]]; then
     if ask_yes_no "Change $REAL_USER shell to zsh?" "y"; then
       grep -qx "$zsh_path" /etc/shells || run_root_cmd bash -c "printf '%s\n' '$zsh_path' >> /etc/shells"
@@ -251,7 +265,8 @@ change_shell() {
   fi
   if [[ "$OS_TYPE" == "linux" ]]; then
     local root_shell
-    root_shell=$(getent passwd root | cut -d: -f7 || true)
+    root_shell=$(get_user_shell root || true)
+    root_shell="${root_shell:-$zsh_path}"
     if [[ "$root_shell" != "$zsh_path" ]] && ask_yes_no "Change root shell to zsh?" "y"; then
       run_root_cmd chsh -s "$zsh_path" root
       info "Root shell set to zsh"
