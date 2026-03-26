@@ -12,6 +12,67 @@ error() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; }
 
 die() { error "$1"; exit 1; }
 
+maybe_rerun_in_pseudo_tty() {
+  if [[ -n "${UPDATE_INTERACTIVE:-}" ]]; then
+    return
+  fi
+  if [[ -t 0 && -t 1 ]]; then
+    return
+  fi
+
+  local source_path="${BASH_SOURCE[0]:-$0}"
+  local interactive_script="$source_path"
+  local cleanup_script=false
+  if [[ ! -f "$interactive_script" ]]; then
+    interactive_script=$(mktemp "/tmp/update2.XXXXXX.sh")
+    cleanup_script=true
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$REPO_URL/update.sh" -o "$interactive_script"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q --timeout=30 -O "$interactive_script" "$REPO_URL/update.sh"
+    else
+      warn "curl or wget is required to relaunch interactively"
+      [[ "$cleanup_script" == true ]] && rm -f "$interactive_script"
+      return
+    fi
+  fi
+
+  chmod +x "$interactive_script"
+
+  local helper=""
+  if command -v python3 >/dev/null 2>&1; then
+    helper="python3"
+  elif command -v python >/dev/null 2>&1; then
+    helper="python"
+  elif command -v script >/dev/null 2>&1; then
+    helper="script"
+  else
+    warn "No pseudo-tty helper available; prompts will default"
+    [[ "$cleanup_script" == true ]] && rm -f "$interactive_script"
+    return
+  fi
+
+  info "Re-running update.sh inside a pseudo-tty for prompts"
+  local rc=0
+  if [[ "$helper" == "script" ]]; then
+    UPDATE_INTERACTIVE=1 script -q /dev/null bash "$interactive_script" "$@"
+    rc=$?
+  else
+    UPDATE_INTERACTIVE=1 "$helper" - "$interactive_script" "$@" <<'PY'
+import os, sys, pty
+script = sys.argv[1]
+args = ["bash", script] + sys.argv[2:]
+status = pty.spawn(args)
+os._exit(status >> 8)
+PY
+    rc=$?
+  fi
+
+  [[ "$cleanup_script" == true ]] && rm -f "$interactive_script"
+  exit "$rc"
+}
+maybe_rerun_in_pseudo_tty "$@"
+
 OS_TYPE=""
 SUDO_PREFIX=""
 REAL_USER=""
@@ -31,18 +92,10 @@ ask_yes_no() {
     display="y/N"
   fi
 
-  local prompt_stream="/dev/stdout"
-  if [[ ! -t 1 && -w /dev/tty ]]; then
-    prompt_stream="/dev/tty"
-  fi
-  local input_stream="/dev/stdin"
-  if [[ ! -t 0 && -r /dev/tty ]]; then
-    input_stream="/dev/tty"
-  fi
-
-  printf '%s [%s] ' "$prompt" "$display" >"$prompt_stream"
-  if ! IFS= read -r answer <"$input_stream"; then
-    warn "No response received; defaulting to $default." >&2
+  if [[ -t 0 ]]; then
+    read -rp "$prompt [$display] " answer
+  else
+    warn "Non-interactive shell; defaulting to $default"
     answer="$default"
   fi
 
