@@ -2,7 +2,7 @@
 # Dotfiles Update/Install Script
 # Usage: ./update.sh [--force]
 
-set -euo pipefail
+set -uo pipefail  # Removed -e to allow graceful error handling
 
 # Colors
 readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' CYAN='\033[0;36m' NC='\033[0m'
