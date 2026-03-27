@@ -265,9 +265,8 @@ cleanup_packages() {
 
 finalize() {
   rm -rf "$TMP_DIR" 2>/dev/null || true
-  info "Dotfiles installed; starting zsh"
+  info "Dotfiles installed"
   cd "$HOME_DIR"
-  exec zsh -l
 }
 
 main() {
