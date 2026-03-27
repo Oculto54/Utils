@@ -19,4 +19,4 @@ fi
 
 chmod +x "$SCRIPT"
 info "Running update.sh..."
-bash "$SCRIPT"; exec zsh -l
+bash "$SCRIPT"; source ~/.zshrc
