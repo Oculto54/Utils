@@ -74,7 +74,7 @@ alias diff='diff --color=auto 2>/dev/null || diff'
 alias reload='exec ${SHELL} -l'
 
 # Common update components
-ZINIT_UPDATE='zinit update --parallel --all && zinit self-update'
+ZINIT_UPDATE='zinit update --all && zinit self-update'
 NPM_UPDATE=''
 command -v npm &>/dev/null && NPM_UPDATE=' && npm update -g && npm cache clean --force'
 
