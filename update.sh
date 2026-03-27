@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
 DOTFILES=(.nanorc .p10k.zsh .zshrc .zshrc-profile .update-repo.sh)
@@ -41,7 +41,7 @@ ask_yes_no() {
   answer="${answer:-$default}"
   case "$answer" in
     [Yy]*) return 0 ;;
-    *) return 1 ;;
+    *)     return 1 ;;
   esac
 }
 
