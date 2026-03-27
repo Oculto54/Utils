@@ -191,7 +191,7 @@ apt_cleanup() {
 }
 
 download_dotfiles() {
-  TMP_DIR=$(mktemp -d)
+  TMP_DIR="${TMPDIR:-$(mktemp -d)}"
   info "Downloading dotfiles"
   for file in "${DOTFILES[@]}"; do
     local dest="$TMP_DIR/$file"
