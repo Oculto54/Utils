@@ -2,13 +2,12 @@
 set -euo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
 
 info() { printf "\033[0;32m[INFO]\033[0m %s\n" "$1"; }
 
 info "Downloading update.sh..."
-SCRIPT="$TMPDIR/update.sh"
+SCRIPT=$(mktemp)
+trap 'rm -f "$SCRIPT"' EXIT
 
 if command -v curl >/dev/null 2>&1; then
   curl -fsSL "$REPO_URL/update.sh" -o "$SCRIPT"
@@ -21,5 +20,4 @@ fi
 
 chmod +x "$SCRIPT"
 info "Running update.sh..."
-export TMPDIR
 bash "$SCRIPT"
