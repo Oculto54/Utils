@@ -2,10 +2,23 @@
 
 
 #   
+# Show line numbers
 set linenumbers
+
+# Auto-indent new lines
 set autoindent
-set mouse
+
+# Disable mouse to avoid interference with terminal selection
+# set mouse
+
+# Set tab width to 4 spaces
 set tabsize 4
+
+# Convert tabs to spaces
 set tabstospaces
-set softwrap
-set casesensitive off
+
+# Disable soft wrap to keep lines intact for copying
+set nowrap
+
+# Case-insensitive search 
+set casesensitive off   
