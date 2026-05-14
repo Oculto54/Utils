@@ -1,7 +1,8 @@
-# Enable syntax highlighting for all available languages
+# Nano configuration
 
+# Syntax highlighting is enabled by update.sh with a local include block.
+# The include path depends on where nano is installed on the target system.
 
-#   
 # Show line numbers
 set linenumbers
 
@@ -17,8 +18,8 @@ set tabsize 4
 # Convert tabs to spaces
 set tabstospaces
 
-# Disable soft wrap to keep lines intact for copying
-set nowrap
+# Disable hard wrapping to keep lines intact for copying
+unset breaklonglines
 
-# Case-insensitive search 
-set casesensitive off   
+# Case-insensitive search
+unset casesensitive

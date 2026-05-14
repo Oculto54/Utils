@@ -19,6 +19,7 @@ HOME_DIR=""
 BACKUP_DIR=""
 TMP_DIR=""
 NANO_SYNTAX_DIR=""
+NANO_EXTRA_SYNTAX_DIR=""
 
 ask_yes_no() {
   local prompt="$1"
@@ -168,12 +169,34 @@ ensure_nanorc_include() {
   [[ -z "$NANO_SYNTAX_DIR" ]] && return
   local target="$HOME_DIR/.nanorc"
   [[ ! -f "$target" ]] && return
+  local block_start="## >>> Utils managed nano syntax highlighting >>>"
+  local block_end="## <<< Utils managed nano syntax highlighting <<<"
   local include_line="include \"$NANO_SYNTAX_DIR/*.nanorc\""
-  local second_line
-  second_line=$(sed -n '2p' "$target" 2>/dev/null || true)
-  [[ "$second_line" == "$include_line" ]] && return
-  { head -n1 "$target" 2>/dev/null; printf '%s\n' "$include_line"; tail -n +2 "$target" 2>/dev/null; } > "$target.new"
-  mv "$target.new" "$target"
+  local extra_include_line=""
+  [[ -n "$NANO_EXTRA_SYNTAX_DIR" ]] && extra_include_line="include \"$NANO_EXTRA_SYNTAX_DIR/*.nanorc\""
+  local cleaned="$target.cleaned.$$"
+  local rendered="$target.new.$$"
+  awk \
+    -v block_start="$block_start" \
+    -v block_end="$block_end" \
+    -v include_line="$include_line" \
+    -v extra_include_line="$extra_include_line" '
+      $0 == block_start { skip = 1; next }
+      $0 == block_end { skip = 0; next }
+      skip { next }
+      $0 == include_line { next }
+      extra_include_line != "" && $0 == extra_include_line { next }
+      { print }
+    ' "$target" > "$cleaned"
+  {
+    printf '%s\n' "$block_start"
+    printf '%s\n' "$include_line"
+    [[ -n "$extra_include_line" ]] && printf '%s\n' "$extra_include_line"
+    printf '%s\n\n' "$block_end"
+    cat "$cleaned"
+  } > "$rendered"
+  mv "$rendered" "$target"
+  rm -f "$cleaned" "$rendered"
   chmod 644 "$target"
   [[ -n "${SUDO_USER:-}" ]] && chown "$REAL_USER:$(id -gn "$REAL_USER")" "$target" 2>/dev/null || true
   info "Ensured nano include"
@@ -201,10 +224,15 @@ determine_nano_dir() {
   if [[ "$OS_TYPE" == "macos" ]]; then
     local prefix
     prefix=$(brew --prefix 2>/dev/null || true)
-    [[ -n "$prefix" ]] && dirs=($prefix/share/nano "/opt/homebrew/share/nano" "/usr/local/share/nano" "/usr/share/nano")
+    [[ -n "$prefix" ]] && dirs=("$prefix/share/nano" "/opt/homebrew/share/nano" "/usr/local/share/nano" "/opt/local/share/nano" "/usr/share/nano")
   fi
   for d in "${dirs[@]}"; do
-    [[ -d "$d" ]] && { NANO_SYNTAX_DIR="$d"; info "Nano syntax: $d"; return; }
+    if [[ -d "$d" ]]; then
+      NANO_SYNTAX_DIR="$d"
+      [[ -d "$d/extra" ]] && NANO_EXTRA_SYNTAX_DIR="$d/extra"
+      info "Nano syntax: $d"
+      return
+    fi
   done
   warn "Nano syntax directory not found"
 }
