@@ -74,6 +74,8 @@ alias diff='diff --color=auto 2>/dev/null || diff'
 alias reload='exec ${SHELL} -l'
 
 # Common update components
+SUDO_PREFIX=""
+[[ "$OSTYPE" != "darwin"* && $EUID -ne 0 ]] && SUDO_PREFIX="sudo "
 ZINIT_UPDATE='zinit update --all && zinit self-update'
 NPM_UPDATE=''
 command -v npm &>/dev/null && NPM_UPDATE=' && npm update -g && npm cache clean --force'
@@ -93,7 +95,7 @@ else
   #alias l='ls --color=auto -lh'
   #alias la='ls --color=auto -la'
   # Only create update alias if apt exists
-  command -v apt &>/dev/null && alias update="sudo apt update && sudo apt upgrade -y && ${ZINIT_UPDATE} && sudo apt autoremove && sudo apt autoclean${NPM_UPDATE}"
+  command -v apt &>/dev/null && alias update="${SUDO_PREFIX}apt update && ${SUDO_PREFIX}apt upgrade -y && ${ZINIT_UPDATE} && ${SUDO_PREFIX}apt autoremove && ${SUDO_PREFIX}apt autoclean${NPM_UPDATE}"
 fi
 
 # Directory navigation

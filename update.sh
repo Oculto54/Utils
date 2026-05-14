@@ -79,7 +79,12 @@ init_env() {
   [[ -z "$HOME_DIR" ]] && die "Home directory for $REAL_USER not found"
   BACKUP_DIR="$HOME_DIR/.dotfiles_backup_$(date +%Y%m%d_%H%M%S)"
   mkdir -p "$BACKUP_DIR"
-  [[ "$OS_TYPE" == "linux" && $EUID -ne 0 ]] && SUDO_PREFIX="sudo" || SUDO_PREFIX=""
+  if [[ "$OS_TYPE" == "linux" && $EUID -ne 0 ]]; then
+    command -v sudo >/dev/null 2>&1 || die "sudo is required when not running as root"
+    SUDO_PREFIX="sudo"
+  else
+    SUDO_PREFIX=""
+  fi
   info "Running as $REAL_USER (home: $HOME_DIR)"
 }
 

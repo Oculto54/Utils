@@ -10,6 +10,7 @@ readonly NC='\033[0m'
 
 # GitHub repository URL
 readonly REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
+SUDO_PREFIX=""
 
 # Functions for colored output
 msg() {
@@ -24,13 +25,14 @@ err() {
     printf "%b[ERROR]%b %s\n" "$RED" "$NC" "$1" >&2
 }
 
-# Check if running as root/sudo
+# Initialize sudo prefix for Linux privileged commands
 check_sudo() {
-    if [[ $EUID -ne 0 ]]; then
-        err "This script must be run with sudo or as root"
-        exit 1
+    if [[ "$OS" == "linux" && $EUID -ne 0 ]]; then
+        command -v sudo &>/dev/null || { err "sudo is required when not running as root"; exit 1; }
+        SUDO_PREFIX="sudo"
+    else
+        SUDO_PREFIX=""
     fi
-    msg "Running with root privileges"
 }
 
 # Detect operating system
@@ -92,8 +94,8 @@ update_packages() {
             fi
         fi
     else
-        apt-get update
-        apt-get upgrade -y
+        $SUDO_PREFIX apt-get update
+        $SUDO_PREFIX apt-get upgrade -y
     fi
     
     msg "Packages updated successfully"
@@ -110,7 +112,7 @@ install_packages() {
             brew install git nano zsh curl wget btop
         fi
     else
-        apt-get install -y git nano zsh curl wget btop
+        $SUDO_PREFIX apt-get install -y git nano zsh curl wget btop
     fi
     
     msg "Packages installed successfully"
@@ -380,7 +382,11 @@ change_shell() {
     
     # Add zsh to /etc/shells if not present
     if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
-        echo "$zsh_path" >> /etc/shells
+        if [[ -n "$SUDO_PREFIX" ]]; then
+            printf '%s\n' "$zsh_path" | $SUDO_PREFIX tee -a /etc/shells > /dev/null
+        else
+            printf '%s\n' "$zsh_path" >> /etc/shells
+        fi
         msg "Added $zsh_path to /etc/shells"
     fi
     
@@ -392,7 +398,7 @@ change_shell() {
         local current_shell
         current_shell=$(get_user_shell "$real_user")
         if [[ "$current_shell" != "$zsh_path" ]]; then
-            chsh -s "$zsh_path" "$real_user"
+            $SUDO_PREFIX chsh -s "$zsh_path" "$real_user"
             msg "Changed shell for $real_user to zsh"
         else
             msg "Shell for $real_user is already zsh"
@@ -404,7 +410,7 @@ change_shell() {
         local root_shell
         root_shell=$(get_user_shell root)
         if [[ "$root_shell" != "$zsh_path" ]]; then
-            chsh -s "$zsh_path" root
+            $SUDO_PREFIX chsh -s "$zsh_path" root
             msg "Changed shell for root to zsh"
         else
             msg "Shell for root is already zsh"
@@ -423,8 +429,8 @@ cleanup() {
             brew cleanup || true
         fi
     else
-        apt-get autoremove -y || true
-        apt-get autoclean || true
+        $SUDO_PREFIX apt-get autoremove -y || true
+        $SUDO_PREFIX apt-get autoclean || true
     fi
     
     msg "Cleanup complete"
@@ -471,8 +477,8 @@ main() {
     msg "Starting dotfiles installation..."
     
     # Step 1: Checks
-    check_sudo
     detect_os
+    check_sudo
     
     # Step 2: Package management
     install_homebrew

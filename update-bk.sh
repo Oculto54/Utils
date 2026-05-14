@@ -51,6 +51,7 @@ init_sudo() {
     if [[ "$OS" == "macos" ]] || [[ $EUID -eq 0 ]]; then
         SUDO_PREFIX=""
     else
+        command -v sudo &>/dev/null || { err "sudo is required when not running as root"; exit 1; }
         SUDO_PREFIX="sudo"
     fi
 }
@@ -223,7 +224,6 @@ main() {
     msg "========================================"
 
     detect_os
-    [[ "$OS" == "linux" && $EUID -ne 0 ]] && { err "Linux requires sudo. Run: sudo $0"; exit 1; }
     init_sudo
 
     local home="$(get_real_home)"
