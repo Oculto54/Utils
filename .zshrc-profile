@@ -87,7 +87,14 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   alias du='du -hd 1 | sort -hr'
   #alias l='ls -lhG'
   #alias la='ls -laG'
-  alias update="brew update && brew upgrade && ${ZINIT_UPDATE} && brew cleanup${NPM_UPDATE}"
+  alias update="brew update && brew upgrade --greedy && ${ZINIT_UPDATE} && brew cleanup${NPM_UPDATE}"
+elif [[ -f /etc/fedora-release ]] || { [[ -f /etc/os-release ]] && grep -qi '^ID=.*fedora' /etc/os-release 2>/dev/null; }; then
+  alias ls='ls --color=auto'
+  alias ll='ls --color=auto -lah'
+  alias du='du -h --max-depth=1 | sort -hr'
+  #alias l='ls --color=auto -lh'
+  #alias la='ls --color=auto -la'
+  command -v dnf &>/dev/null && alias update="${SUDO_PREFIX}dnf -y upgrade && ${ZINIT_UPDATE} && ${SUDO_PREFIX}dnf -y autoremove && ${SUDO_PREFIX}dnf clean all${NPM_UPDATE}"
 else
   alias ls='ls --color=auto'
   alias ll='ls --color=auto -lah'

@@ -3,8 +3,9 @@ set -uo pipefail
 
 REPO_URL="https://raw.githubusercontent.com/Oculto54/Utils/main"
 DOTFILES=(.nanorc .p10k.zsh .zshrc .zshrc-profile .update-repo.sh)
-BREW_PKGS=(git nano zsh curl wget btop)
-APT_PKGS=(git nano zsh curl wget btop)
+BREW_PKGS=(git nano zsh curl wget htop)
+APT_PKGS=(git nano zsh curl wget htop)
+DNF_PKGS=(git nano zsh curl wget htop)
 
 info() { printf "\033[0;32m[INFO]\033[0m %s\n" "$1"; }
 warn() { printf "\033[0;33m[WARN]\033[0m %s\n" "$1"; }
@@ -13,6 +14,7 @@ error() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; }
 die() { error "$1"; exit 1; }
 
 OS_TYPE=""
+PKG_MANAGER=""
 SUDO_PREFIX=""
 REAL_USER=""
 HOME_DIR=""
@@ -48,11 +50,20 @@ ask_yes_no() {
 
 detect_os() {
   case "${OSTYPE:-}" in
-    darwin*) OS_TYPE="macos" ;;
-    linux-gnu* | *BSD*) [[ -f /etc/debian_version ]] && OS_TYPE="linux" && return ;;
+    darwin*) OS_TYPE="macos"; PKG_MANAGER="brew" ;;
+    linux*)
+      OS_TYPE="linux"
+      if [[ -f /etc/fedora-release ]] || { [[ -f /etc/os-release ]] && grep -qi '^ID=.*fedora' /etc/os-release 2>/dev/null; }; then
+        PKG_MANAGER="dnf"
+      elif [[ -f /etc/debian_version ]] || { [[ -f /etc/os-release ]] && grep -qi '^ID=debian\|^ID=ubuntu' /etc/os-release 2>/dev/null; }; then
+        PKG_MANAGER="apt"
+      else
+        die "Unsupported Linux distro (no fedora / debian / ubuntu markers found)"
+      fi
+      ;;
     *) die "Unsupported OS: ${OSTYPE:-unknown}" ;;
   esac
-  info "Detected OS: $OS_TYPE"
+  info "Detected OS: $OS_TYPE (pkg: $PKG_MANAGER)"
 }
 
 resolve_user_home() {
@@ -98,17 +109,22 @@ ensure_brew() {
   if ! command -v brew >/dev/null 2>&1; then
     info "Installing Homebrew"
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  else
+    info "Homebrew already installed"
+  fi
+  # Always set up brew's PATH for the rest of this script's execution,
+  # so `command -v <tool>` finds brew's versions (e.g., newer zsh at
+  # /opt/homebrew/bin/zsh) and chsh gets the correct path.
+  if command -v brew >/dev/null 2>&1; then
     if [[ -d /opt/homebrew/bin ]]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
     elif [[ -d /usr/local/bin ]]; then
       eval "$(/usr/local/bin/brew shellenv)"
     fi
-  else
-    info "Homebrew already installed"
   fi
 }
 
-brew_update() { brew update && brew upgrade; }
+brew_update() { brew update && brew upgrade --greedy; }
 brew_install() { brew install "${BREW_PKGS[@]}"; }
 brew_cleanup() { brew cleanup; }
 
@@ -133,6 +149,32 @@ apt_install() {
 apt_cleanup() {
   apt_exec autoremove -y
   apt_exec autoclean
+}
+
+dnf_update_upgrade() {
+  if [[ -n "$SUDO_PREFIX" ]]; then
+    "$SUDO_PREFIX" dnf -y upgrade
+  else
+    dnf -y upgrade
+  fi
+}
+
+dnf_install() {
+  if [[ -n "$SUDO_PREFIX" ]]; then
+    "$SUDO_PREFIX" dnf -y install "${DNF_PKGS[@]}"
+  else
+    dnf -y install "${DNF_PKGS[@]}"
+  fi
+}
+
+dnf_cleanup() {
+  if [[ -n "$SUDO_PREFIX" ]]; then
+    "$SUDO_PREFIX" dnf -y autoremove
+    "$SUDO_PREFIX" dnf clean all
+  else
+    dnf -y autoremove
+    dnf clean all
+  fi
 }
 
 download_dotfiles() {
@@ -293,7 +335,11 @@ change_shell() {
 }
 
 cleanup_packages() {
-  [[ "$OS_TYPE" == "macos" ]] && brew_cleanup || apt_cleanup
+  case "$PKG_MANAGER" in
+    brew) brew_cleanup ;;
+    apt)  apt_cleanup ;;
+    dnf)  dnf_cleanup ;;
+  esac
 }
 
 finalize() {
@@ -305,14 +351,21 @@ finalize() {
 main() {
   detect_os
   init_env
-  if [[ "$OS_TYPE" == "macos" ]]; then
-    run_command "Ensure Homebrew" ensure_brew
-    run_command "Update Homebrew" brew_update
-    run_command "Install packages" brew_install
-  else
-    run_command "Update apt" apt_update_upgrade
-    run_command "Install packages" apt_install
-  fi
+  case "$PKG_MANAGER" in
+    brew)
+      run_command "Ensure Homebrew" ensure_brew
+      run_command "Update Homebrew" brew_update
+      run_command "Install packages" brew_install
+      ;;
+    apt)
+      run_command "Update apt" apt_update_upgrade
+      run_command "Install packages" apt_install
+      ;;
+    dnf)
+      run_command "Update dnf" dnf_update_upgrade
+      run_command "Install packages" dnf_install
+      ;;
+  esac
   determine_nano_dir
   download_dotfiles
   backup_dotfiles
